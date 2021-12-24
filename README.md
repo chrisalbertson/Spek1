@@ -1,7 +1,5 @@
 # Spot Micro Modular
 
-*Please note that this repository is not yet populated.   Files are placed here as they are created*
-
 This repository holds my version of “Spot Micro” which was originated by Thingiverse user “KDY0523”.  
 
 ### Motivation

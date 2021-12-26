@@ -42,6 +42,7 @@ def control_loop():
         step_length = gs.StepLength
         step_height = gs.StepHeight
         gait = gs.Gait
+        body_height = gs.BodyHeight
         gs.GlobalLock.release()
 
         # Is it time to heartbeat yet?
@@ -50,20 +51,28 @@ def control_loop():
             # TBD - blink a LED
             logging.debug('Heartbeat at', tick_start, step_period, step_length, step_height, gait)
 
-        #Get the current step phase
-        # FIXME this will not work if the step period is changed.
-        step_period = 2.0  # fixme
-        step_time = (tick_start - walk_start_time) % step_period
-        step_phase = step_time / step_period
+        # Get the current step phase
+        # Treat a period of 0.0 as a special case of "stopped" where the phase never
+        # leaves zero
+        if step_period > 0.05:
+            step_time = (tick_start - walk_start_time) % step_period
+            step_phase = step_time / step_period
+        else:
+            step_phase = 0.0
 
-        # find the Y,Z location for the foot
+        # find the normalized Y,Z location for the foot then scale by current
+        # step length and step height
         ground_contact, (footY, footZ) = legLR.get_legYZ(step_phase)
-       
+        footY = footY * step_length
+        footZ = footZ * step_height
 
         # Find knee and hip angle using inverse kinematics
         # FIXME trivial ground to hip frame translation, assume fixed body height
-        hip_to_footY = footY
-        hip_to_footZ = 0.120 - footZ
+        # and assume body translates in Y at the current walking speed
+        hipZ = body_height
+        hipY = step_phase * step_length
+        hip_to_footY = footY - hipY
+        hip_to_footZ = footZ - hipZ
         angle_hip, angle_knee = legLR.ik2d( (hip_to_footY, hip_to_footZ))
 
         # Send the angle to the servo motors

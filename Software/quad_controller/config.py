@@ -24,3 +24,7 @@ leg_lower_length = 0.120
 leg_lower_rotation_limit_min = 180.0
 leg_lower_rotation_limit_max =   0.0
 
+# We can run one of the two GUIs but as of today not both at once
+web_gui = False
+x11_gui = not web_gui
+

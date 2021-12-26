@@ -1,9 +1,9 @@
 import math
 import matplotlib.pyplot as plt
 import logging
-#from adafruit_servokit import ServoKit
 import config
 from piecewise_linear import PiecewiseLinear
+import global_state as gs
 
 
 class Leg:
@@ -29,7 +29,7 @@ class Leg:
 
         """
         The foot path is defined by a pair of functions that give points in
-        (Y,Z) as a funtion of time.  All numbers are scaled to one unit.
+        (Y,Z) as a function of time.  All numbers are scaled to one unit.
     
         So the foot location is the point (f(t), g(t)) where t is the
         faction of the foot's "air time".  While "air time" is some
@@ -39,17 +39,20 @@ class Leg:
         later we can add dynamic curve generation
         """
 
+        # grab globals.  These value can change in real time
+        gs.GlobalLock.acquire()
+        # self.step_period = gs.StepPeriod
+        # self.step_length = gs.StepLength
+        # self.step_height = gs.StepHeight
+        self.gait =        gs.Gait
+        self.air_fraction = gs.StepAirFraction
+        gs.GlobalLock.release()
+
+        # grab configuration.  These value
         self.len_upper = config.leg_upper_length
         self.len_lower = config.leg_lower_length
         self.limit_leg_reach = self.len_lower + self.len_upper
 
-        # fixme use globals set by GUI
-        # self.step_length = step_length
-        self.step_length = 0.050
-        self.step_height = 0.04  # height of step at maximum TBD make this a parameter
-        # fixme use globals set by GUI
-        # self.air_fraction = air_fraction
-        self.air_fraction = 0.20
         # for testing, we can use a triangle ramp footpath.  Later we can use
         # more realistic curves
         self.footpathZ = PiecewiseLinear(((0.0, 0.0),
@@ -64,13 +67,22 @@ class Leg:
                                           (0.75, 0.82),
                                           (1.0, 1.0)))
 
-
         # leg_phase is a number in the range 0..1 that says where in a leg cycle a leg is.
         # This is different from "step_phase" as step_phase is in reference to the entire robot
         # by convention a leg cycle always starts when the leg lifts from the ground.
-        # But in practice robots and animals start from a nuetral position.  So strides rarely
+        # But in practice robots and animals start from a neutral position.  So strides rarely
         # start at phase==0.
-        # Assume step is centered around the hip.  The leg moves equal distance to the front and rear of the hip.
+        #
+        # Example foot motion:
+        #   1. At phase = 0.0 the foot is still at Y=0 and Z=0, but it is abot the lift off
+        #   2. At phase = 0.01 the foot is just off the ground and moving forward.
+        #      Both Y and Z are tiny positive numbers
+        #   3. When the leg phase equals the air-fraction the foot is just landing after
+        #      moving forward onr step length.
+        #   4. After the foot has landed it remains stationary and fixed to the ground
+        #      for the rest of the leg cycle.
+
+        # The leg moves equal distance to the front and rear of the hip.
 
     def get_legYZ(self, leg_phase):
         """Generate the foot locations on an YZ plane that is aligned to the direction of movement
@@ -78,8 +90,14 @@ class Leg:
         :param leg_phase: A number in the range 0...1 that is the phase of the leg cycle.
         :return:
 
-        >>> l = Leg_YZ(1.0, 1.0)
+        >>> l = Leg()
+        >>> l.get_legYZ(0.0)
+        (False, (0.0, 0.5))
+        >>> l = Leg()
         >>> l.get_legYZ(0.5)
+        (False, (0.0, 0.5))
+        >>> l = Leg()
+        >>> l.get_legYZ(9.9)
         (False, (0.0, 0.5))
         """
 
@@ -96,7 +114,7 @@ class Leg:
         if leg_phase > self.air_fraction:
             contact = True
             # the foot is in contact with the ground.
-            return contact, (self.step_length, 0.0)
+            return contact, (1.0, 0.0)
         else:
             contact = False
 
@@ -104,8 +122,8 @@ class Leg:
             # The table records a function with range 0..1  We map this interval to the
             # "air fraction"
             fraction_air_fraction = leg_phase / self.air_fraction
-            z = self.step_height * self.footpathZ.get_point(fraction_air_fraction)
-            y = self.step_length * self.footpathY.get_point(fraction_air_fraction)
+            z = self.footpathZ.get_point(fraction_air_fraction)
+            y = self.footpathY.get_point(fraction_air_fraction)
             return contact, (y, z)
 
 
@@ -113,6 +131,13 @@ class Leg:
         (x1, y1) = p1
         (x2, y2) = p2
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+    def distance3d(self, p1, p2):
+        (x1, y1, z1) = p1
+        (x2, y2, z2) = p2
+        return math.sqrt(  (x2 - x1) ** 2
+                         + (y2 - y1) ** 2
+                         + (z2 - z1) ** 2)
 
 
     def angle_SSS(self, a, b, c):
@@ -130,6 +155,41 @@ class Leg:
         # Return the angle in radians
         return math.acos((a ** 2 - b ** 2 - c ** 2) / (-2.0 * b * c))
 
+    def ik3d(x, y, z):
+        """ Compute angles from x,y,z position of foot.
+
+        According to the ROS REP03 standard,
+            X - the positive x means forward,
+            Y - the positive y means left
+            Z - positive z means up.
+
+
+
+        F=Length of shoulder-point to target-point on x/y only
+        G=length we need to reach to the point on x/y
+        H=3-Dimensional length we need to reach
+        """
+
+        # fixme - these need to come from config
+        l1 = 0.050
+        l2 = 0.015
+        l3 = 0.110
+        l4 - 0.130
+
+        F = math.sqrt(y ** 2 + z ** 2 - l1 ** 2)
+        G = F - l2
+        H = math.sqrt(G ** 2 + x ** 2)
+
+        theta1 = -math.atan2(z, y) - math.atan2(F, -l1)
+
+        D = (H ** 2 - l3 ** 2 - l4 ** 2) / (2 * l3 * l4)
+        theta3 = math.acos(D)
+
+        theta2 = math.atan2(x, G) - math.atan2(l4 * math.sin(theta3), l3 + l4 * math.cos(theta3))
+
+        print("angles", theta1, theta2, theta3)
+        print("degrees", math.degrees(theta1), math.degrees(theta2), math.degrees(theta3))
+        return (theta1, theta2, theta3)
 
     def ik2d(self, foot_pt):
         """return two joint angles given hip-relative foot position"""
@@ -149,8 +209,8 @@ class Leg:
         # check if foot_pt is close enough to the hip to be reached,
         # leg fully extended.
         if (lenHF > self.limit_leg_reach):
-            print("leg reach limit", self.limit_leg_reach, self.len_lower, self.len_upper)
-            raise ValueError("leg reach limit")
+            print("ERROR leg-reach limit", self.limit_leg_reach, self.len_lower, self.len_upper)
+            # raise ValueError("leg reach limit")
 
         # We can use the law of cosines to get the knee angle
         angleK = self.angle_SSS(lenHF, lenHK, lenKF)

@@ -6,6 +6,7 @@ import threading
 import config
 import global_state as gs
 import gui
+import test_xyz_gui
 import walk_loop as loop
 
 
@@ -40,9 +41,16 @@ if __name__ == '__main__':
     if args.sym:
         config.GotHardware = False
 
-    # logging.basicConfig(filename='quad_controller.log', level=logging.INFO)
-    logging.basicConfig(filename='quad_controller.log', level=logging.DEBUG)
+    # fixme -- mode needs to come from arg list.
+    mode = 'test'
+    # mode = 'normal'
 
-    start_tasks()
+    logging.basicConfig(filename='quad_controller.log', level=logging.INFO)
+    # logging.basicConfig(filename='quad_controller.log', level=logging.DEBUG)
+
+    if mode == 'normal':
+        start_tasks()
+    elif mode == 'test':
+        test_xyz_gui.run_gui()
 
     logging.info('Normal termination')

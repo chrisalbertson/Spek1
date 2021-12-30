@@ -8,24 +8,36 @@ elif config.x11_gui:
 import leg
 import servo_shim as ss
 
+global y_direction
+y_direction = 0.0
+global active_leg
+active_leg = 'none'
+
 test_leg = leg.Leg()
 Servo = ss.servo_shim()
 
 
 def move(x,y,z):
 
-    # fixme - Y (left/right) is currently fixed
-    ft_point = (x, z)
-    joint1, joint2, joint3 = test_leg.ik3d(x, y, z)
+    global y_direction
+    global active_leg
+
+    if active_leg == 'none':
+        return
+
+    joint1, joint2, joint3 = test_leg.ik3d(x, y*y_direction, z)
 
     # Send the angle to the servo motors
-    Servo.set_angle(12, joint1)
+    """Servo.set_angle(12, joint1)
     Servo.set_angle(13, joint2)
     Servo.set_angle(14, joint3)
-
-    print('move x,z,hip,knee', x, z, angle_hip, angle_knee)
+    """
+    print('move x,y,z,1,2,3', x, y, z, joint1, joint2, joint3)
 
 def run_gui():
+
+    global y_direction
+    global active_leg
 
     default_x =  0.0
     default_y =  0.050
@@ -35,6 +47,10 @@ def run_gui():
     foot_z = default_z
 
     layout = [[sg.Text('Spot Micro SMM1')],
+
+              [sg.Button('Left Front'), sg.Button('Right Front')],
+              [sg.Button('Left Rear'), sg.Button('Right Rear')],
+              [sg.Text('Active Leg:'), sg.Text('none', key='active_leg_key')],
 
               [sg.Text('X mm '),
                sg.Text('0.0', key='x_text'),
@@ -80,5 +96,25 @@ def run_gui():
             window['z_text'].Update(values['-Z-'])
             foot_z = values['-Z-'] / 1000.0
             move(foot_x, foot_y, foot_z)
+
+        if event == 'Left Front':
+            window['active_leg_key'].Update('Left Front ')
+            active_leg = 'lf'
+            y_direction = -1
+
+        if event == 'Right Front':
+            window['active_leg_key'].Update('Right Front')
+            active_leg = 'rf'
+            y_direction = +1
+
+        if event == 'Left Rear':
+            window['active_leg_key'].Update('Left Rear  ')
+            active_leg = 'lr'
+            y_direction = -1
+
+        if event == 'Right Rear':
+            window['active_leg_key'].Update('Right Rear ')
+            active_leg = 'rr'
+            y_direction = +1
 
     window.close()

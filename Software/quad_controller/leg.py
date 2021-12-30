@@ -155,7 +155,7 @@ class Leg:
         # Return the angle in radians
         return math.acos((a ** 2 - b ** 2 - c ** 2) / (-2.0 * b * c))
 
-    def ik3d(x, y, z):
+    def ik3d(self, x, y, z):
         """ Compute angles from x,y,z position of foot.
 
         According to the ROS REP03 standard,
@@ -174,7 +174,7 @@ class Leg:
         l1 = 0.050
         l2 = 0.015
         l3 = 0.110
-        l4 - 0.130
+        l4 = 0.130
 
         F = math.sqrt(y ** 2 + z ** 2 - l1 ** 2)
         G = F - l2

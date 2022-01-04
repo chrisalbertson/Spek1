@@ -23,7 +23,8 @@ class Leg:
     def __init__(self):
         """Constructor for the basic foot motion generator
 
-        :param: air_fraction: The fraction of a step where the foot is not in ground contact, range is 0..1
+        :param: air_fraction: The fraction of a step where the foot is not
+                              in ground contact, range is 0..1
         :param: step_length:  The length of one step in meters
         """
 
@@ -52,7 +53,7 @@ class Leg:
         self.len_upper = config.leg_upper_length
         self.len_lower = config.leg_lower_length
         self.limit_leg_reach = self.len_lower + self.len_upper
-
+        
         # for testing, we can use a triangle ramp footpath.  Later we can use
         # more realistic curves
         self.footpathZ = PiecewiseLinear(((0.0, 0.0),
@@ -163,31 +164,28 @@ class Leg:
             Y - the positive y means left
             Z - positive z means up.
 
-
-
         F=Length of shoulder-point to target-point on x/y only
         G=length we need to reach to the point on x/y
         H=3-Dimensional length we need to reach
         """
-
-        # fixme - these need to come from config
-        l1 = 0.050
-        l2 = 0.015
-        l3 = 0.110
-        l4 = 0.130
-
-        F = math.sqrt(y ** 2 + z ** 2 - l1 ** 2)
+        
+        l1 = config.j1_to_j2_horizontal_offset
+        l2 = config.j1_to_j2_vertical_offset
+        l3 = config.leg_upper_length
+        l4 = config.leg_lower_length
+        
+        F = math.sqrt(y**2 + z**2 - l1**2)
         G = F - l2
-        H = math.sqrt(G ** 2 + x ** 2)
+        H = math.sqrt(G**2 + x**2)
 
         theta1 = -math.atan2(z, y) - math.atan2(F, -l1)
 
-        D = (H ** 2 - l3 ** 2 - l4 ** 2) / (2 * l3 * l4)
+        D = (H**2 - l3**2 - l4**2) / (2 * l3 * l4)
         theta3 = math.acos(D)
 
         theta2 = math.atan2(x, G) - math.atan2(l4 * math.sin(theta3), l3 + l4 * math.cos(theta3))
 
-        print("angles", theta1, theta2, theta3)
+        print("radians", theta1, theta2, theta3)
         print("degrees", math.degrees(theta1), math.degrees(theta2), math.degrees(theta3))
         return (theta1, theta2, theta3)
 
@@ -223,11 +221,6 @@ class Leg:
             angleF = math.asin(foot_pt[1] / lenHF)
         else:
             angleF = math.pi - math.asin(foot_pt[1] / lenHF)
-
-        print("lenHF=", lenHF,
-              "angleF=", angleF, math.degrees(angleF),
-              "angleK=", angleK, math.degrees(angleK),
-              "angleH=", angleH, math.degrees(angleH))
 
         return angleK, angleF + angleH
 

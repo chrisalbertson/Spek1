@@ -14,6 +14,8 @@ global active_leg
 active_leg = 'none'
 
 test_leg = leg.Leg()
+
+global Servo
 Servo = ss.servo_shim()
 
 
@@ -21,6 +23,7 @@ def move(x,y,z):
 
     global y_direction
     global active_leg
+    global Servo
 
     if active_leg == 'none':
         return
@@ -28,11 +31,12 @@ def move(x,y,z):
     joint1, joint2, joint3 = test_leg.ik3d(x, y*y_direction, z)
 
     # Send the angle to the servo motors
-    """Servo.set_angle(12, joint1)
-    Servo.set_angle(13, joint2)
-    Servo.set_angle(14, joint3)
-    """
-    print('move x,y,z,1,2,3', x, y, z, joint1, joint2, joint3)
+    if active_leg == 'lr':
+        print('move x,y,z,1,2,3', x, y, z, joint1, joint2, joint3)
+        Servo.set_angle( 8, joint1)
+        Servo.set_angle( 9, joint2)
+        Servo.set_angle(10, joint3)
+    
 
 def run_gui():
 
@@ -45,6 +49,9 @@ def run_gui():
     foot_x = default_x
     foot_y = default_y
     foot_z = default_z
+    
+    # Init servos
+    
 
     layout = [[sg.Text('Spot Micro SMM1')],
 
@@ -100,21 +107,21 @@ def run_gui():
         if event == 'Left Front':
             window['active_leg_key'].Update('Left Front ')
             active_leg = 'lf'
-            y_direction = -1
+            y_direction = 1
 
         if event == 'Right Front':
             window['active_leg_key'].Update('Right Front')
             active_leg = 'rf'
-            y_direction = +1
+            y_direction = -1
 
         if event == 'Left Rear':
             window['active_leg_key'].Update('Left Rear  ')
             active_leg = 'lr'
-            y_direction = -1
+            y_direction = 1
 
         if event == 'Right Rear':
             window['active_leg_key'].Update('Right Rear ')
             active_leg = 'rr'
-            y_direction = +1
+            y_direction = -1
 
     window.close()

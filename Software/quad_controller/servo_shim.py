@@ -44,7 +44,8 @@ class servo_shim:
         Use a servo tester of software to set the servo to the 50% point or 1 millisecond
         pulse width point.  Is is the mid point of the servo's range of motion.
         Then place the robot joint at the center point of it's range of motion and install
-        the servo into the joint.   Try to get as close as possible but it is nearly impossible
+        the servo into the joint.   Try to get as close as possible but it is 
+        nearly impossible
         to perfectly align the tow midpoints.   The spline has 25 teeth so at best you
         can only get to the closest tooth.
         
@@ -60,18 +61,14 @@ class servo_shim:
         ad I don't have a protractor marked in radians.   So the software does the conversion
         for us, later in this init function.
         """
-        servo_installed_angle = (
+        self.servo_installed_angle = (
             #   Joint1, Joint2, Joint3, unused
                 0.0,    0.0,    0.0,    0.0,    # Front Left
                 0.0,    0.0,    0.0,    0.0,    # Front Right
-              -20.0,  -25.0,   10.0,    0.0,    # Rear Left
+              -10.0,    0.0,   90.0,    0.0,    # Rear Left
                 0.0,    0.0,    0.0,    0.0)    # Rear Right
 
-        sir = []
-        for a in servo_installed_angle:
-            sir.append(math.radians(a))
-        self.servo_installed_radians = tuple(sir)
-
+       
         # A servo's effective direction is determined by how it is installed,
         # if the output spline shaft is facing forward or to the rear, left or right
         # If increasing servo degrees causes increased theta direction = +1
@@ -80,9 +77,9 @@ class servo_shim:
         self.servo_installed_direction = (
             #   Joint1, Joint2, Joint3, unused
                 -1,      1,      1,     0,    # Front Left
-                -1,     -1,     -1,     0,    # Front Right
-                 1,      1,      1,     0,    # Rear Left
-                 1,     -1,     -1,     0)    # Rear Right
+                 1,     -1,     -1,     0,    # Front Right
+                -1,     -1,     -1,     0,    # Rear Left
+                 1,      1,      1,     0)    # Rear Right
 
         """
         This table records the measured limits for each servo.  They are all
@@ -116,11 +113,15 @@ class servo_shim:
             (1,2,3),                # not used
         )
 
+	# Set this dependig on the servo specs.   Cheap servoes use 50Hz
+	# better servoes ue 300+ Hz
+        pwm_freq = 50
+
         if config.GotHardware:
-            self.kit = ServoKit(channels=16, frequency=325)
+            self.kit = ServoKit(channels=16, frequency=pwm_freq)
             for chan in range(16):
                 self.kit.servo[chan].set_pulse_width_range(
-                    min_pulse=self.servo_range[chan][1],
+                    min_pulse=self.servo_range[chan][0],
                     max_pulse=self.servo_range[chan][1])
                 self.kit.servo[chan].actuation_range = self.servo_range[chan][2]
 
@@ -136,7 +137,7 @@ class servo_shim:
         for chan in range(16):
 
             mid  = self.servo_range[chan][2]/2.0
-            inst = self.servo_installed_radians[chan]
+            inst = self.servo_installed_angle[chan]
             direction = self.servo_installed_direction[chan]
 
             if direction == +1:
@@ -144,7 +145,7 @@ class servo_shim:
                 bias = mid - inst
             elif direction == -1:
                 mult = -deg_per_radian
-                bias = inst - mid
+                bias = mid + inst
             else:
                 mult = 0
                 bias = 0
@@ -154,6 +155,7 @@ class servo_shim:
         # save it as a tuple, tuples are a little faster than lists.
         # and we need to do maybe 600 lookups per second
         self.theta2servo = tuple(t2s)
+        print('theta2servo', self.theta2servo)
 
 
     def set_angle(self, channel_number, radians):
@@ -175,10 +177,12 @@ class servo_shim:
             print('ERROR joint limit', channel_number, radians)
             radians = min(max(joint_min, radians), joint_max)
 
-        servo_deg = (  self.theta2servo[channel_number][0] * radians
-                     + self.theta2servo[channel_number][1])
+        m = self.theta2servo[channel_number][0]
+        b = self.theta2servo[channel_number][1]
+        servo_deg = ( m * radians + b)
 
         if config.GotHardware:
+            print("SERVO", channel_number, servo_deg, "--", m, b)
             self.kit.servo[channel_number].angle = servo_deg
         else:
             log.debug('set_angle', channel_number, servo_deg)

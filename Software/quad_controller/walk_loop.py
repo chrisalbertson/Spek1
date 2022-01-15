@@ -7,12 +7,24 @@ import logging
 log = logging.getLogger(__name__)
 
 import config
-import global_state as gs
+
+# we can use one of these
+if config.ui_web_gui:
+    import PySimpleGUIWeb as sg
+elif config.ui_x11_gui:
+    import PySimpleGUI as sg
+
+#import global_state as gs
 import leg
 import servo_shim as ss
 
+######################################
+# GLOBALS
+run_control_loop = True
+# end GLOBALS
+######################################
 
-"""This is the real-time control look that computes and sets every robot joint
+"""This is the real-time control loop that computes and sets every robot joint
 
 The loop runs at somewhere between 10 and 100 Hz and controls the body and leg
 positions and orientation.
@@ -20,6 +32,8 @@ positions and orientation.
 def control_loop():
 
     log.info('control_loop starting')
+
+    global run_control_loop
 
     # TBD for now lets just do only one leg.
     # That is enough to show we can do more than one.
@@ -36,20 +50,23 @@ def control_loop():
     while 1:
         tick_start = time.time()
 
-        # grab globals
-        gs.GlobalLock.acquire()
-        step_period = gs.StepPeriod
-        step_length = gs.StepLength
-        step_height = gs.StepHeight
-        gait = gs.Gait
-        body_height = gs.BodyHeight
-        gs.GlobalLock.release()
+        if not run_control_loop:
+            break
+
+
+        # grab globals  FIXME  Get values from GUI
+        #gs.GlobalLock.acquire()
+        step_period = 1.000
+        step_length = 0.050
+        step_height = 0.010
+        body_height = 0.120
+        #gs.GlobalLock.release()
 
         # Is it time to heartbeat yet?
         if tick_start > next_heartbeat:
             next_heartbeat = tick_start + 1.0
             # TBD - blink a LED
-            logging.debug('Heartbeat at', tick_start, step_period, step_length, step_height, gait)
+            log.debug('Heartbeat')
 
         # Get the current step phase
         # Treat a period of 0.0 as a special case of "stopped" where the phase never
@@ -86,5 +103,77 @@ def control_loop():
             log.warning('control loop over run, loop elapsed time', tick_elapsed)
         else:
             time.sleep(sleep_time)
+    return
 
 
+def run_gui():
+    log.debug('run_gui...')
+
+    global run_control_loop
+
+    spaces = '      '
+    walk_mode = 'slow'
+    layout_sn = [[sg.Text('Choose parameters then press SET')],
+
+                 [sg.HorizontalSeparator()],
+                 [sg.Text(spaces), sg.Radio('slow', group_id=1, key='-S-')],
+                 [sg.Text(spaces), sg.Radio('medium', group_id=1, key='-M-')],
+                 [sg.HorizontalSeparator()],
+                 [sg.Text(spaces), sg.Button('SET', key='-SET-')],
+                 [sg.Text('Status:'), sg.Text(walk_mode, size=40, key='-STATUS-')],
+
+                 [sg.HorizontalSeparator()],
+                 [sg.Text(spaces), sg.Button('Exit')]
+                 ]
+
+    if config.ui_web_gui:
+        window = sg.Window('Speck -- Walk', layout_sn, web_port=2222, web_start_browser=False)
+    elif config.ui_x11_gui:
+        window = sg.Window('Speck -- Walk', layout_sn)
+
+    while True:  # Event Loop
+        event, values = window.read()
+        # print(event, values)
+
+        if event in (None, 'Exit'):
+            break
+
+        if event == '-SET-':
+            if values['-S-']:
+                walk_mode = 'slow'
+                # fixme - set parms for slow
+
+            elif values['-M-']:
+                walk_mode = 'medium'
+                # fixme - set parms for medim
+
+
+        # Hold the lock only long enouh to copy the global variable, no longer
+        #GlobalLock.acquire()
+        ## fixme - copy globals
+        #GlobalLock.release()
+
+        window['-STATUS-'].Update(walk_mode)
+
+    #GlobalLock.acquire()
+    run_control_loop = False
+    #GlobalLock.release()
+
+    window.close()
+    return
+
+
+
+def start():
+    log.debug('start...')
+
+    global run_control_loop
+
+    run_control_loop = True
+    walk_thread = threading.Thread(target=control_loop, args=(), daemon=True)
+    walk_thread.start()
+
+    run_gui()
+
+    walk_thread.join()
+    return

@@ -1,8 +1,8 @@
 import config
 
-if config.web_gui:
+if config.ui_web_gui:
     import PySimpleGUIWeb as sg
-elif config.x11_gui:
+elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
 import global_state as gs

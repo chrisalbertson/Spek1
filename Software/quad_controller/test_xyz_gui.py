@@ -1,8 +1,8 @@
 import config
 
-if config.web_gui:
+if config.ui_web_gui:
     import PySimpleGUIWeb as sg
-elif config.x11_gui:
+elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
 import leg
@@ -74,12 +74,12 @@ def run_gui():
                sg.Slider(range=(-250.0, 100), resolution=1.0, default_value=-100.0,
                          enable_events=True, key='-Z-')],
 
-              [sg.Button('Exit')]
+              [sg.Button('PLOT'), sg.Button('Exit')]
               ]
 
-    if config.web_gui:
+    if config.ui_web_gui:
         window = sg.Window('Spot Micro SMM1', layout, web_port=2222, web_start_browser=False)
-    elif config.x11_gui:
+    elif config.ui_x11_gui:
         window = sg.Window('Spot Micro SMM1', layout)
 
     while True:  # Event Loop
@@ -123,5 +123,8 @@ def run_gui():
             window['active_leg_key'].Update('Right Rear ')
             active_leg = 'rr'
             y_direction = -1
+
+        if event == 'PLOT':
+            pass
 
     window.close()

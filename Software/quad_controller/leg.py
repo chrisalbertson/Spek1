@@ -1,6 +1,9 @@
 import math
 import matplotlib.pyplot as plt
+
 import logging
+log = logging.getLogger(__name__)
+
 import config
 from piecewise_linear import PiecewiseLinear
 import global_state as gs
@@ -147,7 +150,6 @@ class Leg:
         The Law of Cosines states that
             a^2 = b^2 + c^2 - 2*b*c * cos(A)
         """
-        logging.debug('sss', a, b, c)
 
         # FIXME
         if (a == 0.0 or b == 0.0 or c == 0.0):
@@ -173,8 +175,15 @@ class Leg:
         l2 = config.j1_to_j2_vertical_offset
         l3 = config.leg_upper_length
         l4 = config.leg_lower_length
-        
-        F = math.sqrt(y**2 + z**2 - l1**2)
+
+        # fixme -- should catch and prevent out of rance values at their source
+        try:
+            F = math.sqrt(min(0.001, y**2 + z**2 - l1**2))
+        except ValueError as e:
+            log.warning(e)
+            log.info('out of range, y=' + str(y) + ', z=' + str(z))
+            F = 0.0
+
         G = F - l2
         H = math.sqrt(G**2 + x**2)
 
@@ -229,6 +238,54 @@ class Leg:
         """ Draws a plot to scale of a leg with the foot in the specified position
         """
         angleK, angleH = self.ik2d(footPt)
+        # Find knee point
+        kneeY = self.len_upper * math.cos(angleH)
+        kneeZ = self.len_upper * math.sin(angleH)
+
+        # plt.rcParams["figure.figsize"] = [2.0, 2.0]
+        # plt.rcParams["figure.autolayout"] = True
+        hip = [0.0, 0.0]
+
+        x_values = [hip[0], kneeY, footPt[0]]
+        y_values = [hip[1], kneeZ, footPt[1]]
+        plt.axis('equal')
+        plt.plot(x_values, y_values,
+                 'bo', linestyle="--",
+                 scalex=True, scaley=True, )
+        # plt.text(point1[0] - 0.015, point1[1] + 0.25, "Point1")
+        # plt.text(point2[0] - 0.050, point2[1] - 0.25, "Point2")
+
+        # Sanity check
+        print(
+            "upper len", self.distance(hip, (kneeY, kneeZ)),
+            "lower len", self.distance((kneeY, kneeZ), footPt)
+        )
+        plt.show()
+
+    def plotLeg3d(self, x, y, z):
+        """ Draws a plot to scale of a leg with the foot in the specified position
+        """
+
+
+
+        fig = plt.figure()
+        ax = p3.Axes3D(fig, auto_add_to_figure=False)
+        fig.add_axes(ax)
+
+        ax.set_xlabel('X')
+        ax.set_zlabel('Y')
+        ax.set_ylabel('Z')
+
+        ax.set_xlim3d([-0.15, 0.15])
+        ax.set_zlim3d([-0.25, 0.05])
+        ax.set_ylim3d([0.15, -0.15])
+
+        # ax.invert_yaxis()
+        # Set azimtuth and elevation of plot
+        # ax.view_init(elev=135,azim=0)
+
+        theta1, theta2, theta3 = self.ik3d(x, y, z)
+        ## FIXME This is not finished, does not work at all.
         # Find knee point
         kneeY = self.len_upper * math.cos(angleH)
         kneeZ = self.len_upper * math.sin(angleH)

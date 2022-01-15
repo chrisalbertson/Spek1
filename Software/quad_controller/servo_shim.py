@@ -185,8 +185,8 @@ class servo_shim:
             print("SERVO", channel_number, servo_deg, "--", m, b)
             self.kit.servo[channel_number].angle = servo_deg
         else:
-            log.debug('set_angle', channel_number, servo_deg)
-
+            log.debug('angle ' + str(servo_deg) + ' chan ' + str(channel_number))
+        return
 
 
 

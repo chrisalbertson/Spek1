@@ -75,7 +75,7 @@ def start_ui_level1():
     """ Allow the user to choose what "program" to run, then start it up and wait for it to end"""
 
     manage_level1_webx11_gui()
-    log.debug('level1 gui thread END')
+    log.debug('level1 gui END')
 
     # TBD Need to start a task to watch the buttons and maintain LCD screen on robot
     return

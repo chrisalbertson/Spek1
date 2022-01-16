@@ -14,15 +14,25 @@ if config.ui_web_gui:
 elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
-#import global_state as gs
 import leg
 import servo_shim as ss
 
-######################################
+
+#####################################################
 # GLOBALS
-run_control_loop = True
-# end GLOBALS
-######################################
+# init them all to harmless values in case they are not properly initialized
+# These need to be LOCKED before accessing
+run_control_loop = False
+g_step_period = 0.0
+g_step_length = 0.0
+g_step_height = 0.0
+g_body_height = 0.120
+
+# This is the lock that needs to be used
+GlobalLock = threading.Lock()
+# End GLOBALS
+#####################################################
+
 
 """This is the real-time control loop that computes and sets every robot joint
 
@@ -34,46 +44,51 @@ def control_loop():
     log.info('control_loop starting')
 
     global run_control_loop
+    global GlobalLock
+    global g_step_period
+    global g_step_length
+    global g_step_height
+    global g_body_height
 
     # TBD for now lets just do only one leg.
     # That is enough to show we can do more than one.
     legLR = leg.Leg()
-    
     Servo = ss.servo_shim()
 
-
     next_heartbeat = 0.0
-
     loop_frequency = 20.0  # Hz.
     loop_period = 1.0 / loop_frequency
-    walk_start_time = time.time()
+    step_start_time = time.time()
     while 1:
         tick_start = time.time()
 
-        if not run_control_loop:
+        # FIXME - should only look at these parameters when all feet are in ground contact
+        GlobalLock.acquire()
+        run = run_control_loop
+        step_period = g_step_period
+        step_length = g_step_length
+        step_height = g_step_height
+        body_height = g_body_height
+        GlobalLock.release()
+
+        # This loop runs until the user interface thread sets run_stand_control_loop to False
+        if not run:
             break
-
-
-        # grab globals  FIXME  Get values from GUI
-        #gs.GlobalLock.acquire()
-        step_period = 1.000
-        step_length = 0.050
-        step_height = 0.010
-        body_height = 0.120
-        #gs.GlobalLock.release()
 
         # Is it time to heartbeat yet?
         if tick_start > next_heartbeat:
-            next_heartbeat = tick_start + 1.0
+            next_heartbeat = tick_start + 10.0
             # TBD - blink a LED
             log.debug('Heartbeat')
 
         # Get the current step phase
-        # Treat a period of 0.0 as a special case of "stopped" where the phase never
-        # leaves zero
-        if step_period > 0.05:
-            step_time = (tick_start - walk_start_time) % step_period
+        # Treat a period of 0.0 as a special case of "stopped" where the phase never increments
+        if step_period > 0.001:
+            step_time = tick_start - step_start_time
             step_phase = step_time / step_period
+            if step_phase > 1.0:
+                step_phase = 0.0
+                step_start_time = tick_start
         else:
             step_phase = 0.0
 
@@ -82,6 +97,7 @@ def control_loop():
         ground_contact, (footY, footZ) = legLR.get_legYZ(step_phase)
         footY = footY * step_length
         footZ = footZ * step_height
+        log.debug('phase ' + str(step_phase) + ' Y ' + str(footY) + ' Z ' + str(footZ))
 
         # Find knee and hip angle using inverse kinematics
         # FIXME trivial ground to hip frame translation, assume fixed body height
@@ -110,6 +126,20 @@ def run_gui():
     log.debug('run_gui...')
 
     global run_control_loop
+    global GlobalLock
+    global g_step_period
+    global g_step_length
+    global g_step_height
+    global g_body_height
+
+    # init globals to match initial GUI
+    GlobalLock.acquire()
+    run_control_loop = True
+    g_step_period = 4.0
+    g_step_length = 0.050
+    g_step_height = 0.010
+    g_body_height = 0.120
+    GlobalLock.release()
 
     spaces = '      '
     walk_mode = 'slow'
@@ -141,23 +171,22 @@ def run_gui():
         if event == '-SET-':
             if values['-S-']:
                 walk_mode = 'slow'
-                # fixme - set parms for slow
+                step_period = 4.0
 
             elif values['-M-']:
                 walk_mode = 'medium'
-                # fixme - set parms for medim
-
+                step_period = 2.0
 
         # Hold the lock only long enouh to copy the global variable, no longer
-        #GlobalLock.acquire()
-        ## fixme - copy globals
-        #GlobalLock.release()
+        GlobalLock.acquire()
+        g_step_period = step_period
+        GlobalLock.release()
 
         window['-STATUS-'].Update(walk_mode)
 
-    #GlobalLock.acquire()
+    GlobalLock.acquire()
     run_control_loop = False
-    #GlobalLock.release()
+    GlobalLock.release()
 
     window.close()
     return

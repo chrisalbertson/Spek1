@@ -182,7 +182,7 @@ class Leg:
         except ValueError as e:
             log.warning(e)
             log.info('out of range, y=' + str(y) + ', z=' + str(z))
-            F = 0.0
+            F = l1
 
         G = F - l2
         H = math.sqrt(G**2 + x**2)

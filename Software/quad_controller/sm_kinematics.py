@@ -142,6 +142,37 @@ class Kinematic:
         self.drawLegPair(Tlb, Trb, Lp[2], Lp[3])
 
     def calcIK(self, Lp, angles, center):
+        """ Given location of each foot and the body, find the angles for all joints
+
+        First computes the body IK to find the body-to-hip transform for each
+        leg.  Then the IK for each legs is computers and the resulting joint
+        angles are returned in a Numpy array
+
+        Parameters:
+            Lp: A 4 x 4 Numpy array filled with the desired foot locations.
+                These locations are all relative to the body center BEFORE
+                the body position parameters (see below) are applied
+                as in this example:
+
+                Lp = np.array([ [leg0_frontback, leg0_vertical,  lego_leftright, 1],
+                                [leg1, ...                                        1],
+                                [leg2, ...                                        1],
+                                [leg3, ...                                        1]])
+
+            angles: A tuple of three angles in radians
+            center: A tuple of distances, the body will be translated by
+
+        Returns:
+            A Numpy array that is filled with all 12 joint angles as in the
+            example below:
+
+            joint_angles = np,array([   [leg0_hip, leg0_shoulder, leg0_knee],
+                                        [leg1, ...                         ],
+                                        [leg2, ...                         ],
+                                        [leg3, ...                         ]])
+        """
+
+
         (omega, phi, psi) = angles
         (xm, ym, zm) = center
 

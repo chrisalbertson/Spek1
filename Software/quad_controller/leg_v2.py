@@ -3,19 +3,17 @@ import matplotlib.pyplot as plt
 
 import logging
 log = logging.getLogger(__name__)
-from typing import NewType
+
 from enum import Enum
 
 import config
 
-
-LegName = NewType('LegId', str)
-
+# We always count and order the legs this way, left to right and front to rear
 class LegId (Enum):
-    RF = 0
-    LF = 1
-    RR = 2
-    LR = 3
+    LF = 0      # Left Front is first and number 0
+    RF = 1
+    LR = 2
+    RR = 3      # Right Rear is last and number 3
 
 
 class Leg:
@@ -31,8 +29,8 @@ class Leg:
         self.last_th2 = 0
         self.last_th3 = 0
 
-    def move_to(self, foot_point):
-        (th1, th2, th3) = kinematics.leg_inverse(foot_point)
+    def move_to_angles(self, angles):
+        (th1, th2, th3) = angles
 
         if self.move_enabled:
             servo.setangle(chan_th1, th1)

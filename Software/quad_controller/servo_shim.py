@@ -169,7 +169,6 @@ class servo_shim:
             3) check if real hardware is present either move the servo or write to a log.
         """
 
-
         # Keep joint angle within joint limits
         joint_min = self.joint_limit[channel_number][0]
         joint_max = self.joint_limit[channel_number][1]
@@ -185,7 +184,8 @@ class servo_shim:
             print("SERVO", channel_number, servo_deg, "--", m, b)
             self.kit.servo[channel_number].angle = servo_deg
         else:
-            log.debug('angle ' + str(servo_deg) + ' chan ' + str(channel_number))
+            pass
+            # log.debug('angle ' + str(servo_deg) + ' chan ' + str(channel_number))
         return
 
 

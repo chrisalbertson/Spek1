@@ -60,7 +60,8 @@ class Legs:
         self.leg_list = []
 
         for leg_id in LegId:
-            self.leg_list.append(self.leg(leg_id))
+            one_leg = Leg(LegId)
+            self.leg_list.append(one_leg)
         return
 
     def move_to(self, foot_point_lf, foot_point_rf,

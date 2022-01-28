@@ -14,6 +14,7 @@ Credit:  This file was copied from a SpotMico simulation written by Florian Wilk
 Change Log, relative to original work by Wilk.
     1)  Replace print statements with calling to logging.
 """
+import time
 
 from mpl_toolkits import mplot3d
 import numpy as np
@@ -46,14 +47,14 @@ class Kinematic:
 
     def __init__(self):
 
-        self.l1 = 1000.0 * config.j1_to_j2_horizontal_offset
-        self.l2 = 1000.0 * config.j1_to_j2_vertical_offset
-        self.l3 = 1000.0 * config.leg_upper_length
-        self.l4 = 1000.0 * config.leg_lower_length
+        self.l1 = config.j1_to_j2_horizontal_offset
+        self.l2 = config.j1_to_j2_vertical_offset
+        self.l3 = config.leg_upper_length
+        self.l4 = config.leg_lower_length
 
         # FIXME -- Constants need to come from config
-        self.L = 260
-        self.W = 78
+        self.L = 0.260
+        self.W = 0.078
 
     def bodyIK(self, omega: float, phi: float, psi: float,
                      xm: float, ym: float, zm: float):
@@ -96,7 +97,7 @@ class Kinematic:
         try:
             theta3 = acos(D)
         except ValueError:
-            log.warnng("Error in legIK with x {} y {} and D {}".format(x, y, D))
+            log.warning("Error in legIK with x {} y {} and D {}".format(x, y, D))
             theta3 = 0
 
         theta2 = atan2(z, G) - atan2(l4 * sin(theta3), l3 + l4 * cos(theta3))
@@ -141,7 +142,9 @@ class Kinematic:
         self.drawLegPair(Tlf, Trf, Lp[0], Lp[1])
         self.drawLegPair(Tlb, Trb, Lp[2], Lp[3])
 
-    def calcIK(self, Lp, angles, center):
+    def calcIK(self, Lp,
+               body_angles: (float, float, float),
+               body_center: (float, float, float)):
         """ Given location of each foot and the body, find the angles for all joints
 
         First computes the body IK to find the body-to-hip transform for each
@@ -159,8 +162,8 @@ class Kinematic:
                                 [leg2, ...                                        1],
                                 [leg3, ...                                        1]])
 
-            angles: A tuple of three angles in radians
-            center: A tuple of distances, the body will be translated by
+            body_angles: A tuple of three angles in radians
+            body_center: A tuple of distances, the body will be translated by
 
         Returns:
             A Numpy array that is filled with all 12 joint angles as in the
@@ -172,25 +175,30 @@ class Kinematic:
                                         [leg3, ...                         ]])
         """
 
-
-        (omega, phi, psi) = angles
-        (xm, ym, zm) = center
+        (omega, phi, psi) = body_angles
+        (xm, ym, zm) = body_center
 
         (Tlf, Trf, Tlb, Trb) = self.bodyIK(omega, phi, psi, xm, ym, zm)
 
-        Ix = np.array([[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
-        return np.array([self.legIK(np.linalg.inv(Tlf).dot(Lp[0])),
+        # Ix is used to flip opposing legs on the SpotMicro
+        Ix = np.array([[-1, 0, 0, 0],
+                       [ 0, 1, 0, 0],
+                       [ 0, 0, 1, 0],
+                       [ 0, 0, 0, 1]])
+        return np.array([self.legIK(       np.linalg.inv(Tlf).dot(Lp[0])),
                          self.legIK(Ix.dot(np.linalg.inv(Trf).dot(Lp[1]))),
-                         self.legIK(np.linalg.inv(Tlb).dot(Lp[2])),
+                         self.legIK(       np.linalg.inv(Tlb).dot(Lp[2])),
                          self.legIK(Ix.dot(np.linalg.inv(Trb).dot(Lp[3])))])
 
 
 if __name__ == "__main__":
-    setupView(500).view_init(elev=12., azim=28)
+    performance_test = True
 
-    vertical = 200
-    stance_width = 150
-    stance_length= 260
+    setupView(0.500).view_init(elev=0.012, azim=0.028)
+
+    vertical =     0.200
+    stance_width = 0.150
+    stance_length= 0.260
 
     stance_halfwidth  = stance_width  / 2.0
     stance_halflength = stance_length / 2.0
@@ -201,3 +209,17 @@ if __name__ == "__main__":
                    [-stance_halflength, -vertical, -stance_halfwidth, 1]])
     Kinematic().drawRobot(Lp, (0, 0, 0), (0, 0, 0))
     plt.show()
+
+    if performance_test:
+        num_iterations = 1000
+        smk = Kinematic()
+        start_time = time.time()
+        for i in range(num_iterations):
+            some_small_number = i/(100.0*num_iterations)
+            angles = smk.calcIK(Lp, (some_small_number, 0.0, 0.0),
+                                    (some_small_number, 0.0, 0.0))
+        end_time = time.time()
+        time_per_calc = (end_time - start_time) / num_iterations
+        print('time per IK calc = {0}, calcs per second = {1}'.format(
+            time_per_calc, 1.0 / time_per_calc))
+        print(angles)

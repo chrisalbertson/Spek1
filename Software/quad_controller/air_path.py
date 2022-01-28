@@ -11,7 +11,7 @@ class AirPath:
         # for testing, we can use a triangle ramp footpath.  Later we can use
         # more realistic curves
         #
-        # There are parametric functions where time is the parameter.
+        # These are parametric functions where time is the parameter.
         points_t = (0.0, 0.20, 0.40, 0.60, 0.80, 1.0)  # Function INPUT
         points_x = (0.0, 0.10, 0.37, 0.64, 0.90, 1.0)  # Output values for x
         points_z = (0.0, 0.30, 0.60, 0.90, 1.00, 0.0)  # Output values for z
@@ -21,7 +21,7 @@ class AirPath:
         fz_of_t = interp1d(points_t, points_z, kind='cubic')
 
         # Load up a Numpy array with many points from the above cubic spline
-        # this will be out look-up table, so we compute 100 or more values,
+        # this will be our look-up table, so we compute 100 or more values,
         # later we can use the nearest point lookup and not have much error.
         self.num_data_points = 100
         self.t_point_table = np.linspace(0, 1, num=self.num_data_points+1, endpoint=True)

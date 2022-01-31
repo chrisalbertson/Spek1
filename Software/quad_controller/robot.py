@@ -319,7 +319,7 @@ def walking():
         body_center = (0.0, 0.0, 0.0)
         # DEBUGGING ONLY
         # limit_check_lp(Lp, check_id='ik')
-        lg = 2 # leg to log
+        lg = 0 # leg to log
         log_foot(Lp, lg, step_phase, tick_start)
 
         joint_angles = smk.calcIK(Lp, body_angles, body_center)

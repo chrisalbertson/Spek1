@@ -50,7 +50,7 @@ servo_channel = ( (0, 1, 2),
 
 # This is the list of UIs (User Interfaces) that may be enabled.  Always at least one of these needs to
 # be enabled
-# NOTE:  The comand line arguments processor should always ensure one of this is enabled.
+# NOTE:  The command line arguments processor should always ensure one of this is enabled.
 ui_web_gui = False
 ui_x11_gui = True
 ui_buttons = False       # set to True only if real hardware is present

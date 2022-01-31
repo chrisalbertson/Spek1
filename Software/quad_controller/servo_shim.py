@@ -24,7 +24,15 @@ class servo_shim:
     have very low latency
     """
 
-    def __init__(self):
+    def __init__(self, have_hardware: bool = False):
+        """Class constructor, builds calibration and limits tables for quick lookup
+
+        Parameters:
+            have_hardware:  overides config if set True, used for unit tests
+                            when it is hard to change config.  Should not be
+                            set outside a test environment.
+
+        """
 
         # limits set by the robot's mechanical structure.  These angles
         # are "theta" in radians and are relative to the joints
@@ -113,11 +121,11 @@ class servo_shim:
             (1,2,3),                # not used
         )
 
-	# Set this dependig on the servo specs.   Cheap servoes use 50Hz
-	# better servoes ue 300+ Hz
+	# Set this depending on the servo specs.   Cheap servos use 50Hz
+	# better servos ue 300+ Hz
         pwm_freq = 50
 
-        if config.GotHardware:
+        if config.GotHardware or have_hardware:
             self.kit = ServoKit(channels=16, frequency=pwm_freq)
             for chan in range(16):
                 self.kit.servo[chan].set_pulse_width_range(
@@ -155,24 +163,22 @@ class servo_shim:
         # save it as a tuple, tuples are a little faster than lists.
         # and we need to do maybe 600 lookups per second
         self.theta2servo = tuple(t2s)
-        print('theta2servo', self.theta2servo)
 
-
-    def set_angle(self, channel_number, radians):
+    def set_angle(self, channel_number: int, radians: float) -> None:
         """Set servo to specified joint angle
 
         Several things are done here
             1) radians converted to degrees
             2) the joint's mechanical limit is checked and will not be moved past this.
                The servo's range of motion limit is baked into the joint limit by the
-               __init__() function so we only have to check once here.
+               __init__() function, so we only have to check once here.
             3) check if real hardware is present either move the servo or write to a log.
         """
 
         # Keep joint angle within joint limits
         joint_min = self.joint_limit[channel_number][0]
         joint_max = self.joint_limit[channel_number][1]
-        if not (joint_min <= radians <= joint_max) :
+        if not (joint_min <= radians <= joint_max):
             print('ERROR joint limit', channel_number, radians)
             radians = min(max(joint_min, radians), joint_max)
 
@@ -189,7 +195,32 @@ class servo_shim:
         return
 
 
+    def set_raw_degrees(self, channel_number: int, degrees: float) -> None:
+        """
+        Args:
+            channel_number: An integer in thranf 0...15 that i passed to servokit
+            degrees:        The angle that the servo is to go to, passed
+                            unchanged to the servo
+
+        Returns:   None.
 
 
+        This function should only be called during off-line calibration, not real-time,
+        so it is OK to let it crash if the parameters are out of range
+        """
+
+        assert 0 =< channel_number =< 15
+        assert 0.0 =< degrees =< 360.0
+        
+        self.kit.servo[channel_number].angle = degrees
+        return
 
 
+if __name__ == "__main__":
+
+    logging.basicConfig(filename='quad_controller.log',
+                        filemode='w',
+                        level=logging.DEBUG, )
+    servo = servo_shim(have_hardware=True)
+
+    servo.set_angle(16, )

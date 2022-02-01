@@ -196,7 +196,7 @@ class ServoShim:
         if config.GotHardware:
             self.kit.servo[channel_number].angle = servo_degrees
 
-        log.debug('set_servo channel {0}, angle = {0:7.2f}'.format(
+        log.debug('set_servo channel {0}, angle = {1:7.2f}'.format(
             channel_number, servo_degrees))
         return
 

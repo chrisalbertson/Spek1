@@ -14,7 +14,7 @@ from enum import Enum
 
 import config
 import air_path
-import servo_shim as ss
+import joints
 
 # We always count and order the legs this way, left to right and front to rear
 class LegId (Enum):
@@ -138,7 +138,7 @@ def walking():
                               [ 8,  9, 10],    # LR
                               [12, 13, 14]],    # RR
                              dtype=np.uint8)
-    servos = ss.servo_shim()
+    servos = joints.ServoShim()
     ap = air_path.AirPath()
     smk = sm_kinematics.Kinematic()
 
@@ -324,10 +324,9 @@ def walking():
 
         joint_angles = smk.calcIK(Lp, body_angles, body_center)
         log.debug('log_foot                 angles {0:7.3f}, {1:7.3f}, {2:7.3f}'.
-            format(
-            math.degrees(joint_angles[lg,0]),
-            math.degrees(joint_angles[lg,1]),
-            math.degrees(joint_angles[lg,2])))
+                  format(math.degrees(joint_angles[lg, 0]),
+                         math.degrees(joint_angles[lg, 1]),
+                         math.degrees(joint_angles[lg, 2])))
 
         # Set the robots joints to the angles computed above.
         # Note that the function below will check if the motors are enabled or if

@@ -50,6 +50,7 @@ if config.ui_web_gui:
 elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
+
 class ServoShim:
     """Class to add a thin layer over the physical servo motors.
 
@@ -100,10 +101,10 @@ class ServoShim:
         #
         self.servo_measurements = (
             # Joint1,           Joint2,             Joint3,             unused
-            (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (0, 0, 0),  # Front Left
-            (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (0, 0, 0),  # Front Right
-            (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (0, 0, 0),  # Rear Left
-            (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (90.0, 0.0, 180.0), (0, 0, 0))  # Rear Right
+            (83.0, 63.0, 103.0), (100.0, 170., 25.), (112.0, 177., 5.), (0, 0, 0),  # Front Left
+            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0),  # Front Right
+            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0),  # Rear Left
+            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0))  # Rear Right
 
         # This table is ued to convert radians to degrees while at the same time
         # correcting for the servo' install rotation direction.
@@ -166,9 +167,9 @@ class ServoShim:
                     min_pulse=self.servo_range[chan][0],
                     max_pulse=self.servo_range[chan][1])
                 self.kit.servo[chan].actuation_range = self.servo_range[chan][2]
+        return
 
-
-    def set_angle(self, channel_number: int, radians: float) -> None:
+    def set_angle(self, channel_number: int, radians: float) -> float:
         """Set servo to specified joint angle
 
         Several things are done here
@@ -183,22 +184,24 @@ class ServoShim:
         servo_degrees = joint_degrees + servo_zero_point
 
         # enforce rotation limit
-        if servo_degrees < low_limit:
-            log.warning('clipping channel {0} from {1:7.2} to {2:7.2}'.format(
-                channel_number, servo_degrees, low_limit))
-            servo_degrees = low_limit
+        ll = min(low_limit, high_limit)
+        hl = max(low_limit, high_limit)
+        if servo_degrees < ll:
+            log.warning('too low, clipping channel {0} from {1:8.2f} to {2:8.2f}'.format(
+                channel_number, servo_degrees, ll))
+            servo_degrees = ll
 
-        elif servo_degrees > high_limit:
-            log.warning('clipping channel {0} from {1:7.2} to {2:7.2}'.format(
-                channel_number, servo_degrees, high_limit))
-            servo_degrees = high_limit
+        elif servo_degrees > hl:
+            log.warning('too high, clipping channel {0} from {1:8.2f} to {2:8.2f}'.format(
+                channel_number, servo_degrees, hl))
+            servo_degrees = hl
 
         if config.GotHardware:
             self.kit.servo[channel_number].angle = servo_degrees
 
         log.debug('set_servo channel {0}, angle = {1:7.2f}'.format(
             channel_number, servo_degrees))
-        return
+        return servo_degrees
 
     def set_raw_degrees(self, channel_number: int, degrees: float) -> None:
         """

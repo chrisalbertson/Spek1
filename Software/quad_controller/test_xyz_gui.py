@@ -1,3 +1,4 @@
+import numpy as np
 import config
 
 if config.ui_web_gui:
@@ -5,82 +6,86 @@ if config.ui_web_gui:
 elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
-import leg
-import servo_shim as ss
+import sm_kinematics
+import joints
 
-global y_direction
-y_direction = 0.0
-global active_leg
-active_leg = 'none'
+import logging
+log = logging.getLogger(__name__)
 
-test_leg = leg.Leg()
 
-global Servo
-Servo = ss.servo_shim()
+joint = joints.ServoShim()
 
 
 def move(x,y,z):
 
-    global y_direction
+
     global active_leg
-    global Servo
+    global joint
 
     if active_leg == 'none':
         return
 
-    joint1, joint2, joint3 = test_leg.ik3d(x, y*y_direction, z)
-
-    # Send the angle to the servo motors
-    if active_leg == 'lr':
-        print('move x,y,z,1,2,3', x, y, z, joint1, joint2, joint3)
-        Servo.set_angle( 8, joint1)
-        Servo.set_angle( 9, joint2)
-        Servo.set_angle(10, joint3)
-    
 
 def run_gui():
 
-    global y_direction
-    global active_leg
+    smk = sm_kinematics.Kinematic()
 
+    # Define a neutral stance.  Units are Meters.
     default_x =  0.0
     default_y =  0.050
     default_z = -0.100
-    foot_x = default_x
-    foot_y = default_y
-    foot_z = default_z
-    
-    # Init servos
-    
 
-    layout = [[sg.Text('Spot Micro SMM1')],
+    vertical = 0.180
+    stance_width = 0.150
+    stance_length = 0.260
+    stance_halfwidth = stance_width / 2.0
+    stance_halflength = stance_length / 2.0
 
-              [sg.Button('Left Front'), sg.Button('Right Front')],
-              [sg.Button('Left Rear'), sg.Button('Right Rear')],
-              [sg.Text('Active Leg:'), sg.Text('none', key='active_leg_key')],
+    lfx = stance_halflength
+    lfy = -vertical
+    lfz = stance_halfwidth
 
-              [sg.Text('X mm '),
-               sg.Text('0.0', key='x_text'),
-               sg.Slider(range=(-100.0, 100.0), resolution=1.0, default_value=0.0,
-                         enable_events=True, key='-X-')],
+    rfx = stance_halflength
+    rfy = -vertical
+    rfz = -stance_halfwidth
 
-              [sg.Text('Y mm'),
-               sg.Text('50.0', key='y_text'),
-               sg.Slider(range=(-100, 100), resolution=1.0, default_value=50.0,
-                         enable_events=True, key='-Y-')],
+    lrx = -stance_halflength
+    lry = -vertical
+    lrz = stance_halfwidth
 
-              [sg.Text('Z mm'),
-               sg.Text('-100.0', key='z_text'),
-               sg.Slider(range=(-250.0, 100), resolution=1.0, default_value=-100.0,
-                         enable_events=True, key='-Z-')],
+    rrx = -stance_halflength
+    rry = -vertical
+    rrz = -stance_halfwidth
 
-              [sg.Button('PLOT'), sg.Button('Exit')]
-              ]
+    input_mm_sz: int = 8
+    layout = [
+              [sg.Text('            X              Y              Z')],
+              [sg.Text('LF'), sg.Input(lfx, key='-LFX-', size=input_mm_sz),
+                              sg.Input(lfy, key='-LFY-', size=input_mm_sz),
+                              sg.Input(lfz, key='-LFZ-', size=input_mm_sz)],
+
+              [sg.Text('RF'), sg.Input(rfx, key='-RFX-', size=input_mm_sz),
+                              sg.Input(rfy, key='-RFY-', size=input_mm_sz),
+                              sg.Input(rfz, key='-RFZ-', size=input_mm_sz)],
+
+              [sg.Text('LR'), sg.Input(lrx, key='-LRX-', size=input_mm_sz),
+                              sg.Input(lry, key='-LRY-', size=input_mm_sz),
+                              sg.Input(lrz, key='-LRZ-', size=input_mm_sz)],
+
+              [sg.Text('RR'), sg.Input(rrx, key='-RRX-', size=input_mm_sz),
+                              sg.Input(rry, key='-RRY-', size=input_mm_sz),
+                              sg.Input(rrz, key='-RRZ-', size=input_mm_sz)],
+
+              [sg.Button('Compute', key='-COMPUTE-')],
+              [sg.Text('', key='-IK_solution-', size=(50, 5))],
+              [sg.Button('Move', key='-MOVE-')],
+              [sg.Text('', key='-ServoAngles-', size=(50, 5))],
+             ]
 
     if config.ui_web_gui:
-        window = sg.Window('Spot Micro SMM1', layout, web_port=2222, web_start_browser=False)
+        window = sg.Window('Spot Micro', layout, web_port=2222, web_start_browser=False)
     elif config.ui_x11_gui:
-        window = sg.Window('Spot Micro SMM1', layout)
+        window = sg.Window('Spot Micro', layout)
 
     while True:  # Event Loop
         event, values = window.read()
@@ -89,42 +94,81 @@ def run_gui():
         if event in (None, 'Exit'):
             break
 
-        if event == '-X-':
-            window['x_text'].Update(values['-X-'])
-            foot_x = values['-X-'] / 1000.0
-            move(foot_x, foot_y, foot_z)
+        if event == '-COMPUTE-':
+            lfx = float(values['-LFX-'])
+            lfy = float(values['-LFY-'])
+            lfz = float(values['-LFZ-'])
 
-        if event == '-Y-':
-            window['y_text'].Update(values['-Y-'])
-            foot_y = values['-Y-'] / 1000.0
-            move(foot_x, foot_y, foot_z)
+            rfx = float(values['-RFX-'])
+            rfy = float(values['-RFY-'])
+            rfz = float(values['-RFZ-'])
 
-        if event == '-Z-':
-            window['z_text'].Update(values['-Z-'])
-            foot_z = values['-Z-'] / 1000.0
-            move(foot_x, foot_y, foot_z)
+            lrx = float(values['-LRX-'])
+            lry = float(values['-LRY-'])
+            lrz = float(values['-LRZ-'])
 
-        if event == 'Left Front':
-            window['active_leg_key'].Update('Left Front ')
-            active_leg = 'lf'
-            y_direction = 1
+            rrx = float(values['-RRX-'])
+            rry = float(values['-RRY-'])
+            rrz = float(values['-RRZ-'])
 
-        if event == 'Right Front':
-            window['active_leg_key'].Update('Right Front')
-            active_leg = 'rf'
-            y_direction = -1
+            # Distances of each foot from body center
+            #                   fore/aft         height       left/right
+            Lp = np.array([[lfx, lfy, lfz, 1.],   # LF
+                           [rfx, rfy, rfz, 1.],   # RF
+                           [lrx, lry, lrz, 1.],   # LR
+                           [rrx, rry, rrz, 1.]])  # RR
+            if abs(np.amax(Lp[:, :3])) > 0.300:
+                sg.popup_error('An xyz value is out of range.')
+                continue
 
-        if event == 'Left Rear':
-            window['active_leg_key'].Update('Left Rear  ')
-            active_leg = 'lr'
-            y_direction = 1
+            body_angles = (0.0, 0.0, 0.0)
+            body_center = (0.0, 0.0, 0.0)
+            joint_angles = smk.calcIK(Lp, body_angles, body_center)
+            lfth1, lfth2, lfth3 = joint_angles[0, :]
+            rfth1, rfth2, rfth3 = joint_angles[1, :]
+            lrth1, lrth2, lrth3 = joint_angles[2, :]
+            rrth1, rrth2, rrth3 = joint_angles[3, :]
+            angle_str = '     Theta1    Theta2    Theta3\n' \
+                        'LF {0:8.2f}, {1:8.2f}, {2:8.2f}\n' \
+                        'RF {3:8.2f}, {4:8.2f}, {5:8.2f}\n' \
+                        'LR {6:8.2f}, {7:8.2f}, {8:8.2f}\n' \
+                        'RR {9:8.2f}, {10:8.2f}, {11:8.2f}\n'.format(
+                        lfth1, lfth2, lfth3,
+                        rfth1, rfth2, rfth3,
+                        lrth1, lrth2, lrth3,
+                        rrth1, rrth2, rrth3)
+            window['-IK_solution-'].update(angle_str)
 
-        if event == 'Right Rear':
-            window['active_leg_key'].Update('Right Rear ')
-            active_leg = 'rr'
-            y_direction = -1
+        if event == '-MOVE-':
+            lfsa1 = joint.set_angle( 0, lfth1)
+            lfsa2 = joint.set_angle( 1, lfth2)
+            lfsa3 = joint.set_angle( 2, lfth3)
+            rfsa1 = joint.set_angle( 4, rfth1)
+            rfsa2 = joint.set_angle( 5, rfth2)
+            rfsa3 = joint.set_angle( 6, rfth3)
+            lrsa1 = joint.set_angle( 8, lrth1)
+            lrsa2 = joint.set_angle( 9, lrth2)
+            lrsa3 = joint.set_angle(10, lrth3)
+            rrsa1 = joint.set_angle(12, rrth1)
+            rrsa2 = joint.set_angle(13, rrth2)
+            rrsa3 = joint.set_angle(14, rrth3)
+            servo_str = '   shoulder    upper      lower\n' \
+                        'LF {0:8.2f}, {1:8.2f}, {2:8.2f}\n' \
+                        'RF {3:8.2f}, {4:8.2f}, {5:8.2f}\n' \
+                        'LR {6:8.2f}, {7:8.2f}, {8:8.2f}\n' \
+                        'RR {9:8.2f}, {10:8.2f}, {11:8.2f}\n'.format(
+                        lfsa1, lfsa2, lfsa3,
+                        rfsa1, rfsa2, rfsa3,
+                        lrsa1, lrsa2, lrsa3,
+                        rrsa1, rrsa2, rrsa3)
 
-        if event == 'PLOT':
-            pass
+            window['-ServoAngles-'].update(servo_str)
 
     window.close()
+
+if __name__ == "__main__":
+    logging.basicConfig(filename='quad_controller.log',
+                        filemode='w',
+                        level=logging.DEBUG, )
+
+    run_gui()

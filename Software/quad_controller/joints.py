@@ -39,7 +39,7 @@ not have to write won number and edit ths Python file.)
 import math
 import logging
 log = logging.getLogger(__name__)
-
+from typing import NamedTuple
 import config
 
 if config.GotHardware:
@@ -92,30 +92,39 @@ class ServoShim:
         # (zero_point, lower_limit, upper_limit) where
         #   zero_point -  when the servo is commanded to this value the leg is at
         #                 zero, which by convention is straight down and level
-        #   lower_limit - when the servo is commanded to thi value the joint is
+        #   direction  -  This is direction the servo rotates relative to Theta
+        #                 Some servos are installed wit the output spline shaft
+        #                 facing one way or the other.  Direction is set to
+        #                 +1 if the servo rotation in the same direction as theta
+        #                 and to -1 of the rotation is positive.   Direction is
+        #                 set to servo if there is no servo installed on the channel.
+        #   lower_limit - when the servo is commanded to this value the joint is
         #                 very near the point where it will physically stall out.
         #                 Note this value might is high if the servo is installed
         #                 to run in the reverse direction.  Some will be.
         #   upper_limit - As above but the joint is near the upper limit when the
         #                 servo is set to this value
-        #
+
+        # The measurement is stored in a NamedTuple
+        class SM(NamedTuple):
+            zero_point:  float
+            direction:   int
+            lower_limit: float
+            upper_limit: float
+
+        no_servo = SM(0.0, 0, 0.0, 0.0)
         self.servo_measurements = (
             # Joint1,           Joint2,             Joint3,             unused
-            (83.0, 63.0, 103.0), (100.0, 170., 25.), (112.0, 177., 5.), (0, 0, 0),  # Front Left
-            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0),  # Front Right
-            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0),  # Rear Left
-            (90.0,  0.0, 180.0), ( 90.0,  0.0, 180.0), ( 90.0, 0.0, 180.0), (0, 0, 0))  # Rear Right
+            SM(83.0,  1, 63.0, 103.0), SM(100.0, -1, 170., 25.),   SM(112.0, -1, 177., 5.), no_servo,  # Front Left
+            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Front Right
+            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Rear Left
+            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo)  # Rear Right
 
-        # This table is ued to convert radians to degrees while at the same time
+        # This table is used to convert radians to degrees while at the same time
         # correcting for the servo' install rotation direction.
         r2d_list = []
-        for (_, lower, upper) in self.servo_measurements:
-            if lower < upper:
-                r2d = 180.0 / math.pi
-            elif lower > upper:
-                r2d = -180.0 / math.pi
-            else:
-                r2d = 0.0
+        for sm in self.servo_measurements:
+            r2d = sm.direction * (180.0 / math.pi)
             r2d_list.append(r2d)
         # Tuples are faster to index, and we do this amost 1000 times per second.
         # So it makes some sense to convert the list to a tuple.
@@ -127,30 +136,36 @@ class ServoShim:
         is a list of tuples tuples with these feilds:
         (minimum microseconds, maximum microseconds, degrees of movement)
         """
+        class SR(NamedTuple):
+            low_limit_usec: int
+            high_limit_usec: int
+            extent: float
+        no_range = SR(0, 0, 0.0)
+
         self.servo_range = (
             # Front Left
-            (500, 2500, 180.0),     # Shoulder
-            (500, 2500, 180.0),     # upper
-            (500, 2500, 180.0),     # lower
-            (1,2,3),                # not used
+            SR(500, 2500, 180.0),     # Shoulder
+            SR(500, 2500, 180.0),     # upper
+            SR(500, 2500, 180.0),     # lower
+            no_range,                # not used
 
             # Front Right
-            (500, 2500, 180.0),     # Shoulder
-            (500, 2500, 180.0),     # upper
-            (500, 2500, 180.0),     # lower
-            (1,2,3),                # not used
+            SR(500, 2500, 180.0),     # Shoulder
+            SR(500, 2500, 180.0),     # upper
+            SR(500, 2500, 180.0),     # lower
+            no_range,
 
             # Rear Left
-            (500, 2500, 180.0),     # Shoulder
-            (500, 2500, 180.0),     # upper
-            (500, 2500, 180.0),     # lower
-            (1,2,3),                # not used
+            SR(500, 2500, 180.0),     # Shoulder
+            SR(500, 2500, 180.0),     # upper
+            SR(500, 2500, 180.0),     # lower
+            no_range,
 
             # Rear Right
-            (500, 2500, 180.0),     # Shoulder
-            (500, 2500, 180.0),     # upper
-            (500, 2500, 180.0),     # lower
-            (1,2,3),                # not used
+            SR(500, 2500, 180.0),     # Shoulder
+            SR(500, 2500, 180.0),     # upper
+            SR(500, 2500, 180.0),     # lower
+            no_range
         )
         
         # Set this depending on the servo specs.   Cheap servos use 50Hz
@@ -164,9 +179,9 @@ class ServoShim:
             
             for chan in range(16):
                 self.kit.servo[chan].set_pulse_width_range(
-                    min_pulse=self.servo_range[chan][0],
-                    max_pulse=self.servo_range[chan][1])
-                self.kit.servo[chan].actuation_range = self.servo_range[chan][2]
+                    min_pulse=self.servo_range[chan].low_limit,
+                    max_pulse=self.servo_range[chan].high_limt)
+                self.kit.servo[chan].actuation_range = self.servo_range[chan].extent
         return
 
     def set_angle(self, channel_number: int, radians: float) -> float:
@@ -179,13 +194,12 @@ class ServoShim:
         """
 
         # converts to degrees and for servo installed direction at the same time
-        joint_degrees = radians * self.rad2deg_direction[channel_number]
-        servo_zero_point, low_limit, high_limit = self.servo_measurements[channel_number]
-        servo_degrees = joint_degrees + servo_zero_point
+        servo_degrees = (radians * self.rad2deg_direction[channel_number]) + \
+                            self.servo_measurements[channel_number].zero_point
 
         # enforce rotation limit
-        ll = min(low_limit, high_limit)
-        hl = max(low_limit, high_limit)
+        ll = self.servo_measurements[channel_number].lower_limit
+        hl = self.servo_measurements[channel_number].upper_limit
         if servo_degrees < ll:
             log.warning('too low, clipping channel {0} from {1:8.2f} to {2:8.2f}'.format(
                 channel_number, servo_degrees, ll))
@@ -199,13 +213,13 @@ class ServoShim:
         if config.GotHardware:
             self.kit.servo[channel_number].angle = servo_degrees
 
-        log.debug('set_servo channel {0}, angle = {1:7.2f}'.format(
-            channel_number, servo_degrees))
+        log.debug('set_angle channel {0}, angle {1:7.2f}, theta {2:7.2f}'.format(
+            channel_number, servo_degrees, radians))
         return servo_degrees
 
     def set_raw_degrees(self, channel_number: int, degrees: float) -> None:
         """
-        Returns:Set the specifid servo to a value in degrees with not limit check or calibration
+        Returns:Set the specified servo to a value in degrees with no limit check or calibration
 
         Args:
             channel_number: An integer in the range 0..15 that is passed to servokit

@@ -8,12 +8,12 @@ elif config.ui_x11_gui:
 import global_state as gs
 
 
-"""Provides a user interface for contoling the robot and viewing its state.
+"""Provides a user interface for controlling the robot and viewing its state.
 
-Basically the GIU is a way for the user to access and set a few global veriables
+Basically the GIU is a way for the user to access and set a few global variables
 that define the desires pose and velocity and other operating parameters
 
-Multiple intefaces can be active at the same time
+Multiple interfaces can be active at the same time
 
 There are at least these interfaces
 1) GUI web or X11 based

@@ -450,6 +450,14 @@ class Robot:
     def set_stance_length_relative(self, stance_length: float):
         pass
 
+def walk_test():
+    r = Robot()
+    r.walk(0.05)
+    time.sleep(10)
+    r.stop_natural()
+    r.kill()
+    return
+
 
 
 if __name__ == "__main__":
@@ -457,9 +465,5 @@ if __name__ == "__main__":
     logging.basicConfig(filename='quad_controller.log',
                         filemode='w',
                         level=logging.DEBUG, )
-    r = Robot()
 
-    r.walk(0.05)
-    time.sleep(10)
-    r.stop_natural()
-    r.kill()
+    walk_test()

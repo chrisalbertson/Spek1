@@ -13,9 +13,9 @@ if config.ui_web_gui:
 elif config.ui_x11_gui:
     import PySimpleGUI as sg
 
-import stand
 import test_xyz_gui as xyz
-import walk_loop as walk
+import joints
+import robot
 
 
 def manage_level1_webx11_gui():
@@ -29,21 +29,23 @@ def manage_level1_webx11_gui():
     layout = [[sg.Text('Choose a task then press RUN')],
 
               [sg.HorizontalSeparator()],
-              [sg.Text(spaces), sg.Radio('stand',   group_id=1, key='-SN-')],
-              [sg.Text(spaces), sg.Radio('test - move XYZ',   group_id=1, key='-XYZ-')],
-              [sg.Text(spaces), sg.Radio('walk', group_id=1, key='-WFS-')],
+              [sg.Text(spaces), sg.Radio('stand',                  group_id=1, key='-SN-')],
+              [sg.Text(spaces), sg.Radio('test - move XYZ',        group_id=1, key='-XYZ-')],
+              [sg.Text(spaces), sg.Radio('test - move joint',      group_id=1, key='-MJ-')],
+              [sg.Text(spaces), sg.Radio('test - walk 10 seconds', group_id=1, key='-W10-')],
               [sg.HorizontalSeparator()],
-              [sg.Text(spaces), sg.Button('RUN', key='-RUN-')],
+              [sg.Text(spaces), sg.Button('do it!', key='-RUN-')],
               [sg.Text('Status:'),sg.Text(waiting, size=40, key='-STATUS-')],
 
               [sg.HorizontalSeparator()],
               [sg.Text(spaces), sg.Button('Exit')]
               ]
 
+    window_title = 'Spot -- level 1'
     if config.ui_web_gui:
-        window = sg.Window('Speck -- level 1', layout, web_port=2222, web_start_browser=False)
+        window = sg.Window(window_title, layout, web_port=2222, web_start_browser=False)
     elif config.ui_x11_gui:
-        window = sg.Window('Speck -- level 1', layout)
+        window = sg.Window(window_title, layout)
 
     while True:  # Event Loop
         event, values = window.read()
@@ -55,7 +57,7 @@ def manage_level1_webx11_gui():
         if event == '-RUN-':
             if values['-SN-']:
                 window.Hide()
-                stand.start()
+                #stand.start()
                 window.UnHide()
 
             elif values['-XYZ-']:
@@ -63,9 +65,14 @@ def manage_level1_webx11_gui():
                 xyz.run_gui()
                 window.UnHide()
 
-            elif values['-WFS-']:
+            elif values['-MJ-']:
                 window.Hide()
-                walk.start()
+                joints.run_test_gui()
+                window.UnHide()
+
+            elif values['-W10-']:
+                window.Hide()
+                robot.walk_test()
                 window.UnHide()
 
     window.close()

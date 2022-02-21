@@ -42,13 +42,30 @@ log = logging.getLogger(__name__)
 from typing import NamedTuple
 import config
 
-if config.GotHardware:
+# The import will fail of there is no PCA9685 device on the I2C bus
+# But this is expected if running on development PC in simulation mode
+# config.UsePCA9685Hardware = True
+try:
     from adafruit_servokit import ServoKit
+
+    print('define kit')
+    kit = ServoKit(channels=16,
+                   frequency=60,
+                   reference_clock_speed=25000000)
+    pca9685 = True
+except:
+    # Set UsePCA9685Hardware flag so we do not attempt to use adafruit_servokit
+    pca9685 = False
+    log.warning('failed to import adafruit_servokit')
 
 if config.ui_web_gui:
     import PySimpleGUIWeb as sg
 elif config.ui_x11_gui:
     import PySimpleGUI as sg
+
+
+def have_pca9685():
+    return pca9685
 
 
 class ServoShim:
@@ -62,12 +79,12 @@ class ServoShim:
     4) realtime performance capture
     5) Joint and servo limits are enforced
 
-    This is intened to be a light weight class where all real-time functions
+    This is intended to be a light-weight class where all real-time functions
     have very low latency
     
-    TBD:  Should think about driving the PCA9685 chip using uSec rether then
+    TBD:  Should think about driving the PCA9685 chip using uSec rather than
     letting Servo Kit convert degrees to uSec.   This way we can convert
-    directly from redians to uSec and apply a per-servo calibration all at
+    directly from radians to uSec and apply a per-servo calibration all at
     the same time.   See https://learn.adafruit.com/adafruit-16-channel-servo-driver-with-raspberry-pi/library-reference
     """
 
@@ -75,11 +92,12 @@ class ServoShim:
         """Class constructor, builds calibration and limits tables for quick lookup
 
         Parameters:
-            have_hardware:  overides config if set True, used for unit tests
+            have_hardware:  overrides config if set True, used for unit tests
                             when it is hard to change config.  Should not be
                             set outside a test environment.
-
         """
+
+        global kit
 
         # TABLE OF USER MEASURED VALUES
         #
@@ -112,16 +130,27 @@ class ServoShim:
             lower_limit: float
             upper_limit: float
 
-        no_servo = SM(0.0, 0, 0.0, 0.0)
+        no_servo = SM(0.0, 1, 0.0, 0.0)
         self.servo_measurements = (
-            # Joint1,           Joint2,             Joint3,             unused
-            SM(83.0,  1, 63.0, 103.0), SM(100.0, -1, 170., 25.),   SM(112.0, -1, 177., 5.), no_servo,  # Front Left
+            # Joint1,                  Joint2,                     Joint3,                    unused
+            #                             100                         125.0
+            SM(83.0,  1, 63.0, 103.0), SM(80.0, -1,  25., 170.),  SM(125.0, -1, 5.,  177.),  no_servo,  # Front Left
             SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Front Right
             SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Rear Left
             SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo)  # Rear Right
 
+        # The above table get edited by hand so here we need to check the numbers are reasonable
+        for sm in self.servo_measurements:
+            assert sm.direction == 1 or sm.direction == -1
+            assert 0.0 <= sm.zero_point  <= 270.0
+            assert 0.0 <= sm.lower_limit <= 270.0
+            assert 0.0 <= sm.upper_limit <= 270.0
+            assert sm.lower_limit <= sm.upper_limit
+            assert sm.zero_point  <= sm.upper_limit
+            assert sm.zero_point  >= sm.lower_limit
+
         # This table is used to convert radians to degrees while at the same time
-        # correcting for the servo' install rotation direction.
+        # correcting for the servo's installed rotation direction.
         r2d_list = []
         for sm in self.servo_measurements:
             r2d = sm.direction * (180.0 / math.pi)
@@ -133,7 +162,7 @@ class ServoShim:
         """
         This table records the measured limits for each servo.  They are all
         different, and should be measured before they are installed.  The table
-        is a list of tuples tuples with these feilds:
+        is a list of tuples tuples with these fields:
         (minimum microseconds, maximum microseconds, degrees of movement)
         """
         class SR(NamedTuple):
@@ -167,21 +196,13 @@ class ServoShim:
             SR(500, 2500, 180.0),     # lower
             no_range
         )
-        
-        # Set this depending on the servo specs.   Cheap servos use 50Hz
-        # better servos ue 300+ Hz
-        pwm_freq = 300
 
-        if config.GotHardware:
-            self.kit = ServoKit(channels=16, 
-                                frequency=pwm_freq,
-                                reference_clock_speed=25000000)
-            
+        if config.UsePCA9685Hardware:
             for chan in range(16):
-                self.kit.servo[chan].set_pulse_width_range(
-                    min_pulse=self.servo_range[chan].low_limit,
-                    max_pulse=self.servo_range[chan].high_limt)
-                self.kit.servo[chan].actuation_range = self.servo_range[chan].extent
+                kit.servo[chan].set_pulse_width_range(
+                    min_pulse=self.servo_range[chan].low_limit_usec,
+                    max_pulse=self.servo_range[chan].high_limit_usec)
+                kit.servo[chan].actuation_range = self.servo_range[chan].extent
         return
 
     def set_angle(self, channel_number: int, radians: float) -> float:
@@ -192,6 +213,7 @@ class ServoShim:
             2) the joint's rotational limit is checked and will not be moved past this.
             3) check if real hardware is present either move the servo or write to a log.
         """
+        global kit
 
         # converts to degrees and for servo installed direction at the same time
         servo_degrees = (radians * self.rad2deg_direction[channel_number]) + \
@@ -210,8 +232,8 @@ class ServoShim:
                 channel_number, servo_degrees, hl))
             servo_degrees = hl
 
-        if config.GotHardware:
-            self.kit.servo[channel_number].angle = servo_degrees
+        if config.UsePCA9685Hardware:
+            kit.servo[channel_number].angle = servo_degrees
 
         log.debug('set_angle channel {0}, angle {1:7.2f}, theta {2:7.2f}'.format(
             channel_number, servo_degrees, radians))
@@ -231,15 +253,16 @@ class ServoShim:
         This function should only be called during off-line calibration, not real-time,
         so it is OK to let it crash if the parameters are out of range
         """
+        global kit
 
         assert 0 <= channel_number <= 15, 'channel number is out of range'
-        assert 0.0 <= degrees <= 360.0, 'angle is out of range'
+        assert 0.0 <= degrees <= 270.0,   'angle is out of range'
 
-        self.kit.servo[channel_number].angle = degrees
+        kit.servo[channel_number].angle = degrees
         return
 
 def run_test_gui():
-    if config.GotHardware:
+    if config.UsePCA9685Hardware:
         ssh = ServoShim()
 
     layout = [  [sg.Text('Channel 1..15', size=(25,1)),
@@ -305,14 +328,14 @@ def run_test_gui():
                         window['-JR-'].update('')
 
         if event == '-MS-':
-            if config.GotHardware:
+            if config.UsePCA9685Hardware:
                 ssh.set_raw_degrees(channel_number, raw_degrees)
             else:
                 sg.popup('no hardware\n(ch={0}, degrees={1:7.2f})'.format(
                         channel_number, raw_degrees))
 
         if event == '-MJ-':
-            if config.GotHardware:
+            if config.UsePCA9685Hardware:
                 ssh.set_angle(channel_number, joint_radians)
             else:
                 sg.popup('no hardware\n(ch={0}, radians={1:7.2f})'.format(

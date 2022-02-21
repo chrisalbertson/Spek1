@@ -31,9 +31,13 @@ def run_gui():
     smk = sm_kinematics.Kinematic()
 
     # Define a neutral stance.  Units are Meters.
-    default_x =  0.0
-    default_y =  0.050
-    default_z = -0.100
+    body_x = 0.0
+    body_y = 0.0
+    body_z = 0.0
+
+    body_roll  = 0.0
+    body_pitch = 0.0
+    body_yaw   = 0.0
 
     vertical = 0.180
     stance_width = 0.150
@@ -59,22 +63,32 @@ def run_gui():
 
     input_mm_sz: int = 8
     layout = [
+              [sg.Text('           roll             pitch              yaw')],
+              [sg.Text('Body'), sg.Input(body_roll,  key='-BRR-', size=input_mm_sz),
+                                sg.Input(body_pitch, key='-BPR-', size=input_mm_sz),
+                                sg.Input(body_yaw,   key='-BYR-', size=input_mm_sz)],
+
+              [sg.Text('            X             Y               Z')],
+              [sg.Text('Body'), sg.Input(body_x, key='-BX-', size=input_mm_sz),
+                                sg.Input(body_y, key='-BY-', size=input_mm_sz),
+                                sg.Input(body_z, key='-BZ-', size=input_mm_sz)],
+
               [sg.Text('            X              Y              Z')],
-              [sg.Text('LF'), sg.Input(lfx, key='-LFX-', size=input_mm_sz),
-                              sg.Input(lfy, key='-LFY-', size=input_mm_sz),
-                              sg.Input(lfz, key='-LFZ-', size=input_mm_sz)],
+              [sg.Text('LF '), sg.Input(lfx, key='-LFX-', size=input_mm_sz),
+                               sg.Input(lfy, key='-LFY-', size=input_mm_sz),
+                               sg.Input(lfz, key='-LFZ-', size=input_mm_sz)],
 
-              [sg.Text('RF'), sg.Input(rfx, key='-RFX-', size=input_mm_sz),
-                              sg.Input(rfy, key='-RFY-', size=input_mm_sz),
-                              sg.Input(rfz, key='-RFZ-', size=input_mm_sz)],
+              [sg.Text('RF '), sg.Input(rfx, key='-RFX-', size=input_mm_sz),
+                               sg.Input(rfy, key='-RFY-', size=input_mm_sz),
+                               sg.Input(rfz, key='-RFZ-', size=input_mm_sz)],
 
-              [sg.Text('LR'), sg.Input(lrx, key='-LRX-', size=input_mm_sz),
-                              sg.Input(lry, key='-LRY-', size=input_mm_sz),
-                              sg.Input(lrz, key='-LRZ-', size=input_mm_sz)],
+              [sg.Text('LR '), sg.Input(lrx, key='-LRX-', size=input_mm_sz),
+                               sg.Input(lry, key='-LRY-', size=input_mm_sz),
+                               sg.Input(lrz, key='-LRZ-', size=input_mm_sz)],
 
-              [sg.Text('RR'), sg.Input(rrx, key='-RRX-', size=input_mm_sz),
-                              sg.Input(rry, key='-RRY-', size=input_mm_sz),
-                              sg.Input(rrz, key='-RRZ-', size=input_mm_sz)],
+              [sg.Text('RR '), sg.Input(rrx, key='-RRX-', size=input_mm_sz),
+                               sg.Input(rry, key='-RRY-', size=input_mm_sz),
+                               sg.Input(rrz, key='-RRZ-', size=input_mm_sz)],
 
               [sg.Button('Compute', key='-COMPUTE-')],
               [sg.Text('', key='-IK_solution-', size=(50, 5))],
@@ -95,6 +109,14 @@ def run_gui():
             break
 
         if event == '-COMPUTE-':
+            body_x = float(values['-BX-'])
+            body_y = float(values['-BY-'])
+            body_z = float(values['-BZ-'])
+
+            body_roll =  float(values['-BRR-'])
+            body_pitch = float(values['-BPR-'])
+            body_yaw =   float(values['-BYR-'])
+
             lfx = float(values['-LFX-'])
             lfy = float(values['-LFY-'])
             lfz = float(values['-LFZ-'])
@@ -121,8 +143,8 @@ def run_gui():
                 sg.popup_error('An xyz value is out of range.')
                 continue
 
-            body_angles = (0.0, 0.0, 0.0)
-            body_center = (0.0, 0.0, 0.0)
+            body_angles = (body_roll, body_pitch, body_yaw)
+            body_center = (body_x, body_y, body_z)
             joint_angles = smk.calcIK(Lp, body_angles, body_center)
             lfth1, lfth2, lfth3 = joint_angles[0, :]
             rfth1, rfth2, rfth3 = joint_angles[1, :]

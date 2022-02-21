@@ -347,10 +347,10 @@ def walking():
             time.sleep(sleep_time)
 
     # this task ends
-    log.error('>>>>>>>>>> walk_thread hits return <<<<<<<<<<<')
+    log.debug('walk_thread hits return')
     return
 
-walk_thread = threading.Thread(target=walking, args=(), daemon=True)
+# walk_thread = threading.Thread(target=walking, args=(), daemon=True)
 
 class Robot:
 
@@ -430,11 +430,14 @@ class Robot:
             walk_parameter_lock.release()
             self.walking_state = WalkingState.STARTING
 
-            # Start the walking thread if not already started
+            """"# Start the walking thread if not already started
             if not walk_thread.is_alive():
                 log.debug("starting walk_thread")
-                walk_thread.start()
-            # FIXME -- when to join ith this thread?
+                walk_thread.start()"""
+            # Create and start a walking thread
+            walk_thread = threading.Thread(target=walking, args=(), daemon=True)
+            log.debug("starting walk_thread")
+            walk_thread.start()
         log.debug("walk returning")
         return
 
@@ -450,10 +453,13 @@ class Robot:
     def set_stance_length_relative(self, stance_length: float):
         pass
 
-def walk_test():
+def walk_test(duration):
+    assert duration >   0.0
+    assert duration <= 10.0
+
     r = Robot()
     r.walk(0.05)
-    time.sleep(10)
+    time.sleep(duration)
     r.stop_natural()
     r.kill()
     return

@@ -11,7 +11,7 @@ from enum import Enum
 # If not the controller will not attempt to send data to or
 # interact with physical device nor will it import the
 # associated library modules.
-GotHardware = False
+UsePCA9685Hardware = False
 
 
 body_number_of_legs = 1

@@ -29,10 +29,10 @@ def manage_level1_webx11_gui():
     layout = [[sg.Text('Choose a task then press RUN')],
 
               [sg.HorizontalSeparator()],
-              [sg.Text(spaces), sg.Radio('stand',                  group_id=1, key='-SN-')],
-              [sg.Text(spaces), sg.Radio('test - move XYZ',        group_id=1, key='-XYZ-')],
-              [sg.Text(spaces), sg.Radio('test - move joint',      group_id=1, key='-MJ-')],
-              [sg.Text(spaces), sg.Radio('test - walk 10 seconds', group_id=1, key='-W10-')],
+              [sg.Text(spaces), sg.Radio('stand',                 group_id=1, key='-SN-')],
+              [sg.Text(spaces), sg.Radio('test - move XYZ',       group_id=1, key='-XYZ-')],
+              [sg.Text(spaces), sg.Radio('test - move joint',     group_id=1, key='-MJ-')],
+              [sg.Text(spaces), sg.Radio('test - walk 8 seconds', group_id=1, key='-W10-')],
               [sg.HorizontalSeparator()],
               [sg.Text(spaces), sg.Button('do it!', key='-RUN-')],
               [sg.Text('Status:'),sg.Text(waiting, size=40, key='-STATUS-')],
@@ -72,7 +72,7 @@ def manage_level1_webx11_gui():
 
             elif values['-W10-']:
                 window.Hide()
-                robot.walk_test()
+                robot.walk_test(8.0)
                 window.UnHide()
 
     window.close()

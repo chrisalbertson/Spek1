@@ -3,7 +3,7 @@ Compute forward and inverse kinematics for a spot micro robot.
 
 Note that the SpotMicro has "special" kinematics, and unlike many similar
 quadruped robots not one but two displacements between the first to joints so
-the rotational axis of the first two joints do not intersect.  (They mss by
+the rotational axis of the first two joints do not intersect.  (They miss by
 abut 30 mm depending on the exact 3D files used to print the robot)
 
 Credit:  This file was copied from a SpotMico simulation written by Florian Wilk.
@@ -71,9 +71,9 @@ class Kinematic:
         T = np.array([[0,0,0,xm],[0,0,0,ym],[0,0,0,zm],[0,0,0,0]])
         Tm = T+Rxyz
 
-        sHp=np.sin(pi/2)
-        cHp=np.cos(pi/2)
-        (L,W)=(self.L,self.W)
+        sHp = np.sin(pi/2)
+        cHp = np.cos(pi/2)
+        (L, W) = (self.L, self.W)
 
         return([Tm.dot(np.array([[cHp,0,sHp,L/2],[0,1,0,0],[-sHp,0,cHp,W/2],[0,0,0,1]])),
                 Tm.dot(np.array([[cHp,0,sHp,L/2],[0,1,0,0],[-sHp,0,cHp,-W/2],[0,0,0,1]])),

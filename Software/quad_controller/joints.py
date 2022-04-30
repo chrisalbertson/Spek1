@@ -47,14 +47,14 @@ import config
 # config.UsePCA9685Hardware = True
 try:
     from adafruit_servokit import ServoKit
-
+    calibrated_frequency = 25000000. * 1.08
     print('define kit')
     kit = ServoKit(channels=16,
-                   frequency=60,
-                   reference_clock_speed=25000000)
+                   frequency=50,
+                   reference_clock_speed=calibrated_frequency)
     pca9685 = True
 except:
-    # Set UsePCA9685Hardware flag so we do not attempt to use adafruit_servokit
+    # Set UsePCA9685Hardware flag, so we do not attempt to use adafruit_servokit
     pca9685 = False
     log.warning('failed to import adafruit_servokit')
 
@@ -117,9 +117,8 @@ class ServoShim:
         #                 and to -1 of the rotation is positive.   Direction is
         #                 set to servo if there is no servo installed on the channel.
         #   lower_limit - when the servo is commanded to this value the joint is
-        #                 very near the point where it will physically stall out.
-        #                 Note this value might is high if the servo is installed
-        #                 to run in the reverse direction.  Some will be.
+        #                 very near the point where it will physically stall out,
+        #                 usually by the joint self-colliding because of mechanical limits
         #   upper_limit - As above but the joint is near the upper limit when the
         #                 servo is set to this value
 
@@ -134,10 +133,11 @@ class ServoShim:
         self.servo_measurements = (
             # Joint1,                  Joint2,                     Joint3,                    unused
             #                             100                         125.0
-            SM(83.0,  1, 63.0, 103.0), SM(80.0, -1,  25., 170.),  SM(125.0, -1, 5.,  177.),  no_servo,  # Front Left
-            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Front Right
-            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo,  # Rear Left
-            SM(90.0,  1,  0.0, 180.0), SM( 90.0,  1,  0.0, 180.0), SM( 90.0,  1, 0.0, 180.0), no_servo)  # Rear Right
+            # FIXME  -1 at J1 RIGHT is a HACK.   This needs to be fixed in IK.
+            SM( 90.,  1, 70., 110.), SM( 92., -1, 10., 175.), SM(147., -1, 10., 250.), no_servo, # Front Left ( 0  1  2)
+            SM( 96., -1, 76., 116.), SM( 90.,  1,  0., 170.), SM(135.,  1, 10., 250.), no_servo, # Front Right( 4  5  6)
+            SM( 60., -1, 40.,  80.), SM(122., -1, 50., 180.), SM(180., -1, 30., 270.), no_servo, # Rear Left  ( 8  9 10)
+            SM( 92.,  1, 80., 110.), SM( 90.,  1,  0., 180.), SM( 90.,  1,  0., 240.), no_servo) # Rear Right (12 13 14)
 
         # The above table get edited by hand so here we need to check the numbers are reasonable
         for sm in self.servo_measurements:
@@ -162,7 +162,7 @@ class ServoShim:
         """
         This table records the measured limits for each servo.  They are all
         different, and should be measured before they are installed.  The table
-        is a list of tuples tuples with these fields:
+        is a list of tuples with these fields:
         (minimum microseconds, maximum microseconds, degrees of movement)
         """
         class SR(NamedTuple):
@@ -175,25 +175,25 @@ class ServoShim:
             # Front Left
             SR(500, 2500, 180.0),     # Shoulder
             SR(500, 2500, 180.0),     # upper
-            SR(500, 2500, 180.0),     # lower
+            SR(500, 2500, 270.0),     # lower
             no_range,                # not used
 
             # Front Right
             SR(500, 2500, 180.0),     # Shoulder
             SR(500, 2500, 180.0),     # upper
-            SR(500, 2500, 180.0),     # lower
+            SR(500, 2500, 270.0),     # lower
             no_range,
 
             # Rear Left
             SR(500, 2500, 180.0),     # Shoulder
             SR(500, 2500, 180.0),     # upper
-            SR(500, 2500, 180.0),     # lower
+            SR(500, 2500, 270.0),     # lower
             no_range,
 
             # Rear Right
             SR(500, 2500, 180.0),     # Shoulder
             SR(500, 2500, 180.0),     # upper
-            SR(500, 2500, 180.0),     # lower
+            SR(500, 2500, 270.0),     # lower
             no_range
         )
 
@@ -215,6 +215,11 @@ class ServoShim:
         """
         global kit
 
+        # check that servo chanel is in use
+        if 0 == self.servo_range[channel_number].low_limit_usec:
+            log.error('attempt to set unused servo channel')
+            return
+
         # converts to degrees and for servo installed direction at the same time
         servo_degrees = (radians * self.rad2deg_direction[channel_number]) + \
                             self.servo_measurements[channel_number].zero_point
@@ -233,7 +238,10 @@ class ServoShim:
             servo_degrees = hl
 
         if config.UsePCA9685Hardware:
-            kit.servo[channel_number].angle = servo_degrees
+            try:
+                kit.servo[channel_number].angle = servo_degrees
+            except OSError as err:
+                log.error('OSError raised in set_angle() when writing to PCA9685,' + str(err))
 
         log.debug('set_angle channel {0}, angle {1:7.2f}, theta {2:7.2f}'.format(
             channel_number, servo_degrees, radians))
@@ -258,7 +266,10 @@ class ServoShim:
         assert 0 <= channel_number <= 15, 'channel number is out of range'
         assert 0.0 <= degrees <= 270.0,   'angle is out of range'
 
-        kit.servo[channel_number].angle = degrees
+        try:
+            kit.servo[channel_number].angle = degrees
+        except OSError as err:
+            log.error('OSError raised in set_raw_degrees when writing to PCA9685,' + str(err))
         return
 
 def run_test_gui():

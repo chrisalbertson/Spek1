@@ -23,10 +23,19 @@ def manage_level1_webx11_gui():
     waiting = 'none -- waiting for input'
     spaces = '    '
 
-    # fixme -- need to set size of fonts and radio buttons larger
-    sg.set_options(scaling=2.0)
+    if config.ui_web_gui:
+        layout_web = [[sg.Text('Choose a task')],
 
-    layout = [[sg.Text('Choose a task then press RUN')],
+              [sg.Text(spaces), sg.Button('stand',                 key='-SN-')],
+              [sg.Text(spaces), sg.Button('test - move XYZ',  enable_events=True,     key='-XYZ-')],
+              [sg.Text(spaces), sg.Button('test - move joint',     key='-MJ-')],
+              [sg.Text(spaces), sg.Button('test - walk 8 seconds', key='-W10-')],
+              [sg.Text('Status:'), sg.Text(waiting,                key='-STATUS-')],
+              [sg.Text(spaces), sg.Button('Exit')]
+              ]
+    elif config.ui_x11_gui:
+        sg.set_options(scaling=2.0)
+        layout = [[sg.Text('Choose a task then press RUN')],
 
               [sg.HorizontalSeparator()],
               [sg.Text(spaces), sg.Radio('stand',                 group_id=1, key='-SN-')],
@@ -43,7 +52,7 @@ def manage_level1_webx11_gui():
 
     window_title = 'Spot -- level 1'
     if config.ui_web_gui:
-        window = sg.Window(window_title, layout, web_port=2222, web_start_browser=False)
+        window = sg.Window(window_title, layout_web, web_port=2222, web_start_browser=False)
     elif config.ui_x11_gui:
         window = sg.Window(window_title, layout)
 

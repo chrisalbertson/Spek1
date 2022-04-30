@@ -15,6 +15,11 @@ from enum import Enum
 import config
 import air_path
 import joints
+import balance
+
+#FIXME
+#import imu
+#imu = imu.IMU()
 
 # We always count and order the legs this way, left to right and front to rear
 class LegId (Enum):
@@ -23,18 +28,10 @@ class LegId (Enum):
     LR = 2
     RR = 3      # Right Rear is last and number 3
 
-# This is used to implement a very simple state machine
-class WalkingState (Enum):
-    AT_REST  = 0
-    STOPPING = 1
-    STARTING = 2
-    WALKING  = 3
-
 init_time = time.time()
 
 ## GLOBAL VARIABLES ####################
 gbl_velocity = 0.0
-gbl_walking_state = WalkingState.AT_REST
 run_walking_control_loop = False
 
 gbl_body_center_up =      0.180
@@ -54,12 +51,13 @@ def limit_check_lp(Lp, check_id=''):
         print(check_id, Lp)
     return
 
-def get_neural_stance_Lp() -> np.array:
+
+def neutral_stance_Lp() -> np.array:
     """Function to return a reasonable neutral stance on flat ground"""
 
     # Units for these are Meters.
     vertical =      0.180
-    stance_width =  0.150
+    stance_width =  0.120
     stance_length = 0.260
 
     stance_halfwidth = stance_width / 2.0
@@ -93,7 +91,7 @@ def get_length_period(velocity: float) -> (float, float):
     ground is flat or inclined
     """
 
-    max_velocity = 0.1      # this is as fast as the robot can move in meters per second
+    max_velocity = config.max_forward_speed      # meters per second
     preferred_step_length = 0.050
     step_period = preferred_step_length / min(velocity, max_velocity)
 
@@ -125,47 +123,63 @@ def walking():
 
     global run_walking_control_loop
     global walk_parameter_lock
-    global gbl_walking_state
 
     global gbl_body_center_up
     global gbl_body_center_left
     global gbl_body_center_forward
 
     ### Channel number on PCA9685 for each angle
-    #                               th1 th2 th3
+    #                         th1 th2 th3
     servo_channel = np.array([[ 0,  1,  2],    # LF
                               [ 4,  5,  6],    # RF
                               [ 8,  9, 10],    # LR
-                              [12, 13, 14]],    # RR
+                              [12, 13, 14]],   # RR
                              dtype=np.uint8)
     servos = joints.ServoShim()
     ap = air_path.AirPath()
     smk = sm_kinematics.Kinematic()
 
     # numpy array to hold position of all four feet
-    Lp = get_neural_stance_Lp()
+    Lp_neutral = neutral_stance_Lp()
+    Lp = Lp_neutral.copy()
     limit_check_lp(Lp, check_id='stance')
 
     # Set the leg phases and "air fraction" to define an amble gait
     # where one legs moves forward at a time
     # In this gait, leg LF leads and the others follow
-    step_air_fraction = 0.20
+    step_air_fraction = 0.125
     leg_relative_phase = [0., 0., 0., 0.]
-    leg_relative_phase[LegId.LF.value] =  0.00
-    leg_relative_phase[LegId.RR.value] = -0.25
-    leg_relative_phase[LegId.RF.value] = -0.50
-    leg_relative_phase[LegId.LR.value] = -0.75
+    gait = 'trot'
+
+    if gait == 'trot':
+        leg_relative_phase[LegId.LF.value] =  0.00
+        leg_relative_phase[LegId.RR.value] = -0.05
+        leg_relative_phase[LegId.RF.value] = -0.50
+        leg_relative_phase[LegId.LR.value] = -0.55
+    elif gait == 'creep':
+        leg_relative_phase[LegId.LF.value] =  0.00
+        leg_relative_phase[LegId.RR.value] = -0.25
+        leg_relative_phase[LegId.RF.value] = -0.50
+        leg_relative_phase[LegId.LR.value] = -0.75
+    else:
+        log.error('invalid gait')
 
     # Get Velocity, so we can compute initial step length and period
-    walk_parameter_lock.acquire()
-    velocity = gbl_velocity
-    body_center_up =      gbl_body_center_up
-    body_center_left =    gbl_body_center_left
-    body_center_forward = gbl_body_center_forward
-    walk_parameter_lock.release()
+    with walk_parameter_lock:
+        velocity = gbl_velocity
+        body_center_up =      gbl_body_center_up
+        body_center_left =    gbl_body_center_left
+        body_center_forward = gbl_body_center_forward
 
-    step_height = 0.015 #FIXME This should not be a constant
-    step_length, step_period = get_length_period(velocity)
+    if velocity == 0.0:
+        step_length = 0.0
+        step_period = 0.0
+        standing = True
+    else:
+        step_length, step_period = get_length_period(velocity)
+        standing = False
+
+    step_height = 0.024 #FIXME This should not be a constant
     last_velocity = velocity
 
     # Velocity should be a vector, not a scaler as this robot can
@@ -175,9 +189,9 @@ def walking():
     heartbeat_time = 0.0
     heartbeat_period = 1.0
 
-    loop_frequency = 10.0  # fixme this should come from config
+    loop_frequency = 20.0  # fixme this should come from config
     loop_period = 1.0 / loop_frequency
-    step_start = 0
+    step_start = 0.
 
     while True:
         tick_start = time.time()
@@ -186,7 +200,6 @@ def walking():
         log.debug('acquiring the lock...')
         if walk_parameter_lock.acquire(blocking=True, timeout=0.010):
             run = run_walking_control_loop
-            walking_state    = gbl_walking_state
             velocity = gbl_velocity
             body_center_up =      gbl_body_center_up
             body_center_left =    gbl_body_center_left
@@ -206,27 +219,15 @@ def walking():
             log.debug('heartbeat at {0}'.format(tick_start))
             heartbeat_time = tick_start + heartbeat_period
 
-        # Check the state.  If AT_REST then we should not advance the step_state
+        # Check the state.  If at rest then we should not advance the step_state
         # or move the legs other than to maintain balance and body position
-        if walking_state != WalkingState.AT_REST:
+        if not standing:
 
             # get the current step phase, handle wrap-around.  Phase can never
             # be greater than 1.0
             # Note that step_start is initialized to zero when ever the robot
             # is AT_REST, so we set it the first time around
             if step_start == 0.0:
-                # fixme - find a besst way than what is commented out below
-                # We do nt start walking at phase = 0.0.   We start before then
-                # at the point in the cycle where all the fet just made ground
-                # contact.   So at start-up there is a delay before the first
-                # foot leaves the ground
-                '''
-                phase_duration = phase_duration_4_foot_contact(leg_relative_phase,
-                                                                 step_air_fraction)
-                time_duration = phase_duration * step_period
-                step_start = tick_start - time_duration
-                step_phase = 1.0 - phase_duration
-                '''
                 step_start = tick_start
                 step_phase = 0.0
             else:
@@ -238,7 +239,7 @@ def walking():
             assert step_phase <= 1.0, \
                    '{0}, {1}, {2}'.format(tick_start, step_start, step_period)
 
-            # Track the number of feet on the ground.  We start assuming none are
+            # Track the number of feet on the ground.  We start by assuming none are
             num_feet_on_ground = 0
 
             for leg_id in LegId:
@@ -250,7 +251,7 @@ def walking():
                 log.debug('leg = {0}, leg_phase = {1}, time = {2}'.
                           format(leg_id.value, leg_phase, tick_start))
 
-                # is this leg in ground contact?
+                # Is this leg in ground contact?
                 # Feet always start to lift off the ground when phase is zero
                 # and remain off the ground until phase is > then the current air fraction
                 if leg_phase < step_air_fraction:
@@ -266,7 +267,12 @@ def walking():
                                                  step_length, step_height)
                     #fixme - the below assume the foot moves only fore/aft and the robot
                     #        never side steps.  We should project X on to x,y plane
-                    Lp[leg_id.value, :2] = [foot_x, foot_z - body_center_up]
+                    #Lp[leg_id.value, :2] = [foot_x + Lp_neutral[leg_id.value, 0], foot_z + Lp_neutral[leg_id.value, 1]]
+                    #Lp[leg_id.value, :2] = [foot_x                              , foot_z + Lp_neutral[leg_id.value, 1]]
+                    # FIXME uing the constant below is a HACK.  Need to compute it
+                    x_neutral = Lp_neutral[leg_id.value, 0]
+                    #z_neutral = Lp_neutral[leg_id.value, 1]
+                    Lp[leg_id.value, :2] = [foot_x + x_neutral, foot_z - body_center_up]
                     # DEBUGGING ONLY
                     # limit_check_lp(Lp, check_id='air')
 
@@ -275,47 +281,50 @@ def walking():
                     num_feet_on_ground += 1
 
                     # We know this foot is stationary relative to the ground
-                    # abd moves relative to the robot exactly opposite
+                    # and moves relative to the robot exactly opposite
                     # to the robot's velocity vector. So we move the foot
                     # by the -1 times amount the robot moves in one loop period
-                    Lp[leg_id.value, 0:3] -= velocity_vector * loop_period
+                    # fixme this should be a vector calculation
+                    ##Lp[leg_id.value, 0:3] -= velocity_vector * loop_period
+                    Lp[leg_id.value, 0] -= velocity_vector[0] * loop_period
                     Lp[leg_id.value, 1]   = -body_center_up
                     # DEBUGGING ONLY
                     # limit_check_lp(Lp, check_id='ground')
         else:
+            # The robot is "standing", that is not walking and velocity is zero
             num_feet_on_ground = 4      # When AT_REST we assume 4 feet on ground
-            step_start = 0              # Step phase does not advance when AT_REST
+            step_start = 0.             # Step phase does not advance when AT_REST
+            step_phase = 0.
 
         # Check if all four feet are on the ground, if so then we can
         # update any of the step parameters
         if num_feet_on_ground == 4:
 
-            # If the walk state was "stopping" now is the time to actually stop
-            # fixme -- Here, we instantly change walking stat, assuming this is OK
-            #          while all four feet are on the ground.  Maybe we should do
-            #          a acceleration/deceleration ramp.  maybe the first step
-            #          from a stop needs to be 1/2 step_length?
-            if walking_state == WalkingState.STOPPING:
-                # Setting to AT_REST causes the step phase to stop advancing and
-                # the step start time to reset.
-                walking_state = WalkingState.AT_REST
-
-            elif walking_state == WalkingState.STARTING:
-                walking_state = WalkingState.WALKING
-
             # Now is the time, with all four feet down
             # to adjust the step parameters.
             if velocity != last_velocity:
-                step_length, step_period = get_length_period(velocity)
-                last_velocity = velocity
+
+                # We treat zero velocity as a special case.
+                if velocity == 0.0:
+                    step_length = 0.0
+                    step_period = 0.0
+                    last_velocity = 0.0
+                    standing = True
+                else:
+                    step_length, step_period = get_length_period(velocity)
+                    last_velocity = velocity
+                    standing = False
+
                 # Velocity should be a vector, not a scaler as this robot can
                 # walk in a direction it is not facing.
-                velocity_vector[0] = velocity  # [forward, up left]
+                velocity_vector = (velocity, 0.0, 0.0)  # (forward, up, left)
 
         # fixme -- add in any body position and angle needed for things like balance
-
+        #roll_correction, pitch_correction = balance.rotate_to_level(imu.get_acceleration())
+        roll_correction, pitch_correction = 0.0, 0.0
+        
         # Find the joint angles to move the foot to the required position
-        body_angles = (0.0, 0.0, 0.0)
+        body_angles = (roll_correction, pitch_correction, 0.0)
         body_center = (0.0, 0.0, 0.0)
         # DEBUGGING ONLY
         # limit_check_lp(Lp, check_id='ik')
@@ -350,107 +359,105 @@ def walking():
     log.debug('walk_thread hits return')
     return
 
-# walk_thread = threading.Thread(target=walking, args=(), daemon=True)
-
 class Robot:
 
     def __init__(self):
-
-        self.walking_state = WalkingState.AT_REST
+        self.robot_state = 'inactive'
         return
 
     def kill(self):
-        global walk_thread
         global walk_parameter_lock
         global run_walking_control_loop
 
         log.debug('kill entered at {0}'.format(time.time()))
 
-        walk_parameter_lock.acquire()
-        run_walking_control_loop = False
-        walk_parameter_lock.release()
+        with walk_parameter_lock:
+            run_walking_control_loop = False
+
+        self.robot_state = 'inactive'
         return
 
     def stop_natural(self):
-        """ Stops the robot at the next natural opportunity. """
-        log.debug('stop_natural entered at {0}'.format(time.time()))
-        # fixme -- need to lock globals
-        if  (self.walking_state == WalkingState.AT_REST or
-             self.walking_state == WalkingState.STOPPING):
-            # The robot is already stopping or stopped, so there is nothing to do
-            pass
-        elif (self.walking_state == WalkingState.STARTING or
-              self.walking_state == WalkingState.WALKING):
-            # set the state to "STOPPING" and the walk thread will notice
-            # this and stop next time it has all four feet on the ground
-            self.walking_state = WalkingState.STOPPING
-        else:
-            log.error("invalid state " + str(self.walking_state))
+        """ DO NOT USE THIS, I am going to remove it """
+        log.warning('Need to remove call to Stop_Natural()')
+        self.set_velocity(0.0)
 
-        log.debug('stop_natural returning')
-        return
 
     def stop_panic(self):
-        """Stops robot as quickly as possible.  Jams feet to low wide stance"""
-        self.walking_state = WalkingState.AT_REST
+        """NO NOT USE THIS"""
+        log.warning('Need to remove call to Stop_panic()')
+        self.kill()
         return
 
     def set_velocity(self, velocity: float):
         """Sets global velocity variable"""
-
         global walk_parameter_lock
+        global gbl_velocity
 
-        walk_parameter_lock.acquire()
-        gbl_velocity = velocity
-        walk_parameter_lock.release()
+        with walk_parameter_lock:
+            gbl_velocity = velocity
         return
 
     def walk(self, velocity: float):
         """ The robot walks"""
 
         global run_walking_control_loop
-        global gbl_walking_state
         global gbl_velocity
         global walk_parameter_lock
 
         log.debug('walk entered at {0}'.format(time.time()))
 
-        # Check the current state.
-        walk_parameter_lock.acquire()
-        self.walking_state = gbl_walking_state
-        gbl_velocity = velocity
-        walk_parameter_lock.release()
-
-
-        if self.walking_state != WalkingState.WALKING:
-
-            walk_parameter_lock.acquire()
-            gbl_walking_state  = WalkingState.STARTING
+        with walk_parameter_lock:
             run_walking_control_loop = True
-            walk_parameter_lock.release()
-            self.walking_state = WalkingState.STARTING
+            gbl_velocity = velocity
 
-            """"# Start the walking thread if not already started
-            if not walk_thread.is_alive():
-                log.debug("starting walk_thread")
-                walk_thread.start()"""
-            # Create and start a walking thread
-            walk_thread = threading.Thread(target=walking, args=(), daemon=True)
+        # Create and start a walking thread.
+        if not self.robot_state == 'walking':
+            self.walk_thread = threading.Thread(target=walking, args=(), daemon=True)
             log.debug("starting walk_thread")
-            walk_thread.start()
+            self.robot_state = 'walking'
+            self.walk_thread.start()
+        else:
+            log.debug("walk_thread already active")
+
         log.debug("walk returning")
         return
 
-    def set_body_angles_relative(self, angles: (float, float, float)):
+    def set_body_angles(self, angles: (float, float, float)):
         pass
 
-    def set_body_center_relative(self, body_point: (float, float, float)):
+    def set_body_center(self, body_point: (float, float, float)):
+
+        global walk_parameter_lock
+
+        global gbl_body_center_up
+        global gbl_body_center_left
+        global gbl_body_center_forward
+
+        forward = body_point[0]
+        assert -0.100 <= forward <= 0.100
+
+        left    = body_point[1]
+        assert -0.100 <= left    <= 0.100
+
+        up      = body_point[2]
+        assert  0.120 <= up      <= 0.220
+
+        log.debug('acquiring the lock...')
+        if walk_parameter_lock.acquire(blocking=True, timeout=0.5):
+
+            gbl_body_center_forward = forward
+            gbl_body_center_left    = left
+            gbl_body_center_up      = up
+
+            walk_parameter_lock.release()
+        else:
+            log.error('failed to acquire lock')
+
+    def set_stance_width(self, stance_width: float):
         pass
 
-    def set_stance_width_relative(self, stance_width: float):
-        pass
-
-    def set_stance_length_relative(self, stance_length: float):
+    def set_stance_length(self, stance_length: float):
         pass
 
 def walk_test(duration):

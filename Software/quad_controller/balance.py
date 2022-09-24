@@ -31,8 +31,8 @@ def area_triangle(a: Point, b: Point, c: Point) -> float:
 def centroid_triangle(a: Point, b: Point, c: Point) -> Point:
     """Compute the centroid of a triangle given three points A, B and C
 
-    >>> centroid_triangle((0., 0.), (0., 1.), (1., 0.))
-    (0.3333333333333333, 0.3333333333333333)
+    >>> '%.5f, %.5f' % centroid_triangle((0., 0.), (0., 1.), (1., 0.))
+    '0.33333, 0.33333'
     """
 
     x1, y1 = a
@@ -84,14 +84,14 @@ def rotate_to_level(accel_x: float, accel_y: float, accel_z: float) -> (float, f
     >>> rotate_to_level(0.0, 0.0, 10.0)
     (0.0, 0.0)
 
-    >>> rotate_to_level(1.0, 0.0, 10.0)
-    (0.0, -0.09966865249116202)
+    >>> '%.5f, %.5f' % rotate_to_level(1.0, 0.0, 10.0)
+    '0.00000, -0.09967'
 
-    >>> rotate_to_level(0.0, 1.0, 10.0)
-    (-0.09966865249116202, 0.0)
+    >>> '%.5f, %.5f' % rotate_to_level(0.0, 1.0, 10.0)
+    '-0.09967, 0.00000'
 
-    >>> rotate_to_level(-1.0, -1.0, 10.0)
-    (0.09966865249116202, 0.09966865249116202)
+    >>> '%.5f, %.5f' % rotate_to_level(-1.0, -1.0, 10.0)
+    '0.09967, 0.09967'
     """
 
     # FIXME for now, we assume the accelerometer axis is aligned with the body axis

@@ -28,15 +28,21 @@ class LegId (Enum):
     LR = 2
     RR = 3      # Right Rear is last and number 3
 
+
 init_time = time.time()
 
 ## GLOBAL VARIABLES ####################
 gbl_velocity = 0.0
+gbl_turnrate = 0.0
 run_walking_control_loop = False
 
-gbl_body_center_up =      0.180
-gbl_body_center_left =    0.0
+gbl_body_center_up      = 0.180  #FIXME Do not us constant
+gbl_body_center_left    = 0.0
 gbl_body_center_forward = 0.0
+
+gbl_body_angle_roll  = 0.0
+gbl_body_angle_pitch = 0.0
+gbl_body_angle_yaw   = 0.0
 
 walk_parameter_lock = threading.Lock()
 ## END GLOBAL VERIABLES #################
@@ -56,19 +62,20 @@ def neutral_stance_Lp() -> np.array:
     """Function to return a reasonable neutral stance on flat ground"""
 
     # Units for these are Meters.
-    vertical =      0.180
-    stance_width =  0.120
+    vertical =      0.180   #FIXME constant
+    stance_width =  0.130
     stance_length = 0.260
 
     stance_halfwidth = stance_width / 2.0
     stance_halflength = stance_length / 2.0
 
+    bias = -0.065
     # Distances of each foot from body center
-    #                   fore/aft         height       left/right
-    Lp = np.array([[ stance_halflength, -vertical,  stance_halfwidth, 1],   # LF
-                   [ stance_halflength, -vertical, -stance_halfwidth, 1],   # RF
-                   [-stance_halflength, -vertical,  stance_halfwidth, 1],   # LR
-                   [-stance_halflength, -vertical, -stance_halfwidth, 1]])  # RR
+    #                   fore/aft               height      left/right
+    Lp = np.array([[ stance_halflength + bias, -vertical,  stance_halfwidth, 1],   # LF
+                   [ stance_halflength + bias, -vertical, -stance_halfwidth, 1],   # RF
+                   [-stance_halflength + bias, -vertical,  stance_halfwidth, 1],   # LR
+                   [-stance_halflength + bias, -vertical, -stance_halfwidth, 1]])  # RR
 
     limit_check_lp(Lp, check_id='get_neural_stance_Lp')
     return Lp
@@ -76,26 +83,29 @@ def neutral_stance_Lp() -> np.array:
 def get_length_period(velocity: float) -> (float, float):
     """ find combination of step length and period given a desired velocity
 
-    This is a placeholder function that returns a fixed workable result.
-    It needs to be replaced with one that works like this
-
-    First find a step length based on velocity.  This will be a lookup.  The lookup
-    function will strongly prefer some length and only move away from that fo very
-    fast or slow speeds.   There will be a different look with smaller length for
-    sideways or backward walking.   For arbitrary angles we mix these with sin/cos.
-
-    Next step period is computed to give the desired velocity with the preferred
-    step length
-
-    Later maybe so other factors will be added to the calculation like if the
-    ground is flat or inclined
+    This is a placeholder function that returns a workable result.
     """
 
-    max_velocity = config.max_forward_speed      # meters per second
-    preferred_step_length = 0.050
-    step_period = preferred_step_length / min(velocity, max_velocity)
+    # Enforce a speed limit
+    if velocity > config.max_forward_speed:
+        log.warning('velocity > config.max_forward_speed')
+        velocity = config.max_forward_speed
 
-    return preferred_step_length, step_period
+    min_hz = 1.5
+    max_hz = 3.0
+    preferred_step_length = 0.060  #FIXME constany
+
+    step_hz = velocity / preferred_step_length
+
+    if step_hz > max_hz:
+        step_hz = max_hz
+    elif step_hz < min_hz:
+        step_hz - min_hz
+
+    step_length = velocity / step_hz
+    step_period = 1.0 / step_hz
+
+    return step_length, step_period
 
 
 def phase_duration_4_foot_contact(phase_list, air_fraction) -> float:
@@ -127,6 +137,11 @@ def walking():
     global gbl_body_center_up
     global gbl_body_center_left
     global gbl_body_center_forward
+    
+    global gbl_body_angle_roll
+    global gbl_body_angle_pitch
+    global gbl_body_angle_yaw
+
 
     ### Channel number on PCA9685 for each angle
     #                         th1 th2 th3
@@ -147,16 +162,18 @@ def walking():
     # Set the leg phases and "air fraction" to define an amble gait
     # where one legs moves forward at a time
     # In this gait, leg LF leads and the others follow
-    step_air_fraction = 0.125
+
     leg_relative_phase = [0., 0., 0., 0.]
     gait = 'trot'
 
     if gait == 'trot':
+        step_air_fraction = 0.20
         leg_relative_phase[LegId.LF.value] =  0.00
-        leg_relative_phase[LegId.RR.value] = -0.05
+        leg_relative_phase[LegId.RR.value] =  0.00
         leg_relative_phase[LegId.RF.value] = -0.50
-        leg_relative_phase[LegId.LR.value] = -0.55
+        leg_relative_phase[LegId.LR.value] = -0.50
     elif gait == 'creep':
+        step_air_fraction = 0.20
         leg_relative_phase[LegId.LF.value] =  0.00
         leg_relative_phase[LegId.RR.value] = -0.25
         leg_relative_phase[LegId.RF.value] = -0.50
@@ -167,9 +184,14 @@ def walking():
     # Get Velocity, so we can compute initial step length and period
     with walk_parameter_lock:
         velocity = gbl_velocity
-        body_center_up =      gbl_body_center_up
-        body_center_left =    gbl_body_center_left
+        turnrate = gbl_turnrate
+        body_center_up      = gbl_body_center_up
+        body_center_left    = gbl_body_center_left
         body_center_forward = gbl_body_center_forward
+         
+        body_angle_roll  = gbl_body_angle_roll
+        body_angle_pitch = gbl_body_angle_pitch
+        body_angle_yaw   = gbl_body_angle_yaw
 
     if velocity == 0.0:
         step_length = 0.0
@@ -179,7 +201,7 @@ def walking():
         step_length, step_period = get_length_period(velocity)
         standing = False
 
-    step_height = 0.024 #FIXME This should not be a constant
+    step_height = 0.040 #FIXME This should not be a constant (025)
     last_velocity = velocity
 
     # Velocity should be a vector, not a scaler as this robot can
@@ -201,9 +223,16 @@ def walking():
         if walk_parameter_lock.acquire(blocking=True, timeout=0.010):
             run = run_walking_control_loop
             velocity = gbl_velocity
+            turnrate = gbl_turnrate
+            
             body_center_up =      gbl_body_center_up
             body_center_left =    gbl_body_center_left
             body_center_forward = gbl_body_center_forward
+         
+            body_angle_roll  = gbl_body_angle_roll
+            body_angle_pitch = gbl_body_angle_pitch
+            body_angle_yaw   = gbl_body_angle_yaw
+     
             walk_parameter_lock.release()
         else:
             log.error('>>>failed to acquire lock<<<  {0}'.format(tick_start))
@@ -251,6 +280,23 @@ def walking():
                 log.debug('leg = {0}, leg_phase = {1}, time = {2}'.
                           format(leg_id.value, leg_phase, tick_start))
 
+                # The robot has several ways to turn.  One is to adjust the length of each
+                # step on the left side relative to the step length on the right side
+                # "turnrate" is the amount longerthe right side step is than the left side
+                # step length.  When turnrate == 1.0 then the right side is twice as long
+                # as the left.  When turnrate == 0.0 the steps are equal length.
+                if abs(turnrate) < 0.01:
+                    # we are not turning
+                    adjusted_step_length = step_length
+                else:
+                    delta_step_length = step_length * turnrate
+
+                    # if the current leg on the left or the right?
+                    if leg_id in (LegId.LF, LegId.LR):
+                        adjusted_step_length = step_length - delta_step_length
+                    else:
+                        adjusted_step_length = step_length + delta_step_length
+
                 # Is this leg in ground contact?
                 # Feet always start to lift off the ground when phase is zero
                 # and remain off the ground until phase is > then the current air fraction
@@ -264,8 +310,8 @@ def walking():
                     assert 0.0 <= air_fraction_completed <= 1.0
 
                     (foot_x, foot_z) = ap.get_xz(air_fraction_completed,
-                                                 step_length, step_height)
-                    #fixme - the below assume the foot moves only fore/aft and the robot
+                                                 adjusted_step_length, step_height)
+                    # fixme - the below assume the foot moves only fore/aft and the robot
                     #        never side steps.  We should project X on to x,y plane
                     #Lp[leg_id.value, :2] = [foot_x + Lp_neutral[leg_id.value, 0], foot_z + Lp_neutral[leg_id.value, 1]]
                     #Lp[leg_id.value, :2] = [foot_x                              , foot_z + Lp_neutral[leg_id.value, 1]]
@@ -322,10 +368,11 @@ def walking():
         # fixme -- add in any body position and angle needed for things like balance
         #roll_correction, pitch_correction = balance.rotate_to_level(imu.get_acceleration())
         roll_correction, pitch_correction = 0.0, 0.0
+        #FIXME use the corrections, not zeroes.
         
         # Find the joint angles to move the foot to the required position
-        body_angles = (roll_correction, pitch_correction, 0.0)
-        body_center = (0.0, 0.0, 0.0)
+        body_angles = (body_angle_roll + roll_correction, body_angle_pitch + pitch_correction, body_angle_yaw)
+        body_center = (body_center_forward, body_center_up-0.180, body_center_left)  #FIXME constal .180
         # DEBUGGING ONLY
         # limit_check_lp(Lp, check_id='ik')
         lg = 0 # leg to log
@@ -398,6 +445,15 @@ class Robot:
             gbl_velocity = velocity
         return
 
+    def set_turnrate(self, turnrate: float):
+        """Sets global turnrate variable"""
+        global walk_parameter_lock
+        global gbl_turnrate
+
+        with walk_parameter_lock:
+            gbl_turnrate = turnrate
+        return
+
     def walk(self, velocity: float):
         """ The robot walks"""
 
@@ -423,8 +479,35 @@ class Robot:
         log.debug("walk returning")
         return
 
-    def set_body_angles(self, angles: (float, float, float)):
-        pass
+    def set_body_angles(self, body_angle: (float, float, float)):
+
+        global walk_parameter_lock
+
+        global gbl_body_angle_roll
+        global gbl_body_angle_pitch
+        global gbl_body_angle_yaw
+        
+        limit = math.radians(21.0) #limit for all angles
+
+        roll = body_angle[0]
+        assert -limit <= roll <= limit,  f"roll = {roll}"
+
+        pitch    = body_angle[1]
+        assert -limit <= pitch <= limit, f"pitch = {pitch}"
+
+        yaw      = body_angle[2]
+        assert -limit <= yaw <= limit,   f"yaw = {yaw}"
+
+        log.debug('acquiring the lock...')
+        if walk_parameter_lock.acquire(blocking=True, timeout=0.5):
+
+            gbl_body_angle_roll   = roll
+            gbl_body_angle_pitch  = pitch
+            gbl_body_angle_yaw    = yaw
+
+            walk_parameter_lock.release()
+        else:
+            log.error('failed to acquire lock')
 
     def set_body_center(self, body_point: (float, float, float)):
 
@@ -441,7 +524,7 @@ class Robot:
         assert -0.100 <= left    <= 0.100
 
         up      = body_point[2]
-        assert  0.120 <= up      <= 0.220
+        assert  0.120 <= up      <= 0.240
 
         log.debug('acquiring the lock...')
         if walk_parameter_lock.acquire(blocking=True, timeout=0.5):

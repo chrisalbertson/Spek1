@@ -13,7 +13,7 @@ class AirPath:
         #
         # These are parametric functions where time is the parameter.
         points_t = (0.0, 0.20, 0.40, 0.60, 0.80, 1.0)  # Function INPUT
-        points_x = (0.0, 0.10, 0.37, 0.64, 0.90, 1.0)  # Output values for x
+        points_x = (0.0, 0.20, 0.37, 0.64, 0.90, 1.0)  # Output values for x
         points_z = (0.0, 0.30, 0.60, 0.90, 1.00, 0.0)  # Output values for z
 
         # create cubic spline functions based on the above data points

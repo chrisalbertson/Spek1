@@ -15,12 +15,12 @@ UsePCA9685Hardware = True
 
 body_number_of_legs = 4
 
-# This the maxium forward speed the robot can walk.  Untis are meters per second
+# This the maximum forward speed the robot can walk.  Units are meters per second
 max_forward_speed = 0.10
 
 # on the Spot Micro, the second joint axis does NOT intersect the first but
 # is vertically offset about 20 to 15 mm.    In many quadruped models the
-# The J1 to J2 distance is just "l1" but SpotMicro needs FOUR constants
+#  J1 to J2 distance is just "l1" but SpotMicro needs FOUR constants
 j1_to_j2_horizontal_offset = 0.060     # l1
 j1_to_j2_vertical_offset   = 0.015     # l2
 leg_upper_length           = 0.115     # l3

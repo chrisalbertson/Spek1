@@ -1,4 +1,4 @@
-import numpy as np
+qimport numpy as np
 import config
 
 if config.ui_web_gui:

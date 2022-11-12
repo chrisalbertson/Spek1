@@ -1,4 +1,4 @@
-""" Top level class that defines the robot object and some actions the robot can perform
+""" Defines the robot class and some actions the robot can perform and the main real-time control loop.
 """
 import time
 import threading
@@ -9,34 +9,70 @@ import sm_kinematics
 
 log = logging.getLogger(__name__)
 
-###import leg_v2 as leg
+
 from enum import Enum
 
 import config
-import air_path
 import joints
 import balance
+import footpath
 
-#FIXME
-#import imu
-#imu = imu.IMU()
+
+# FIXME
+# import imu
+# imu = imu.IMU()
 
 # We always count and order the legs this way, left to right and front to rear
-class LegId (Enum):
-    LF = 0      # Left Front is first and number 0
+class LegId(Enum):
+    LF = 0  # Left Front is first and number 0
     RF = 1
     LR = 2
-    RR = 3      # Right Rear is last and number 3
+    RR = 3  # Right Rear is last and number 3
+
+
+# These are the things the robot can do.  So the robot can be in the
+# "walk state" or the "neutral_stand state" or one of the others
+class BehaviorState(Enum):
+    INITIAL_POWERUP = 0     # Legs are in unknown position
+    NEUTRAL_STAND   = 1     # Standing straight at medium height and weight equal on all feet
+    WALK            = 2     # Actively walking, although velocity could be zero
+    SIT             = 3     # Sit posture, with body tilted forward end upward
+
+
+# These are sub-states. Each of the above states can have one of these sub-states.
+class BehaviorSubState(Enum):
+    STARTING     = 0       # Transition to current Behavior State
+    CONTINUING   = 1
+    TERMINATING  = 2       # Behavior is ending
 
 
 init_time = time.time()
+prior_state = BehaviorState.INITIAL_POWERUP
+robot_substate = BehaviorSubState.STARTING
 
-## GLOBAL VARIABLES ####################
-gbl_velocity = 0.0
-gbl_turnrate = 0.0
-run_walking_control_loop = False
+# PARAMETERS ##########################
+neutral_body_height = 0.200
+neutral_stance_width = 0.160
+neutral_stance_length = 0.265
 
-gbl_body_center_up      = 0.180  #FIXME Do not us constant
+
+# Inter Task GLOBAL VARIABLES ####################
+# These are used for inter-task communication.  The real-time control task
+# reads them and the GUI or other controller task sets them.
+# Always use the lock to access these.
+gbl_run_control_loop = False
+
+gbl_robot_state    = BehaviorState.INITIAL_POWERUP
+
+# The next three variables are equivalent to the ROS "twist" message.
+gbl_velocity_x = 0.0
+gbl_velocity_y = 0.0
+gbl_rot_rate_z = 0.0
+
+gbl_stance_width   = neutral_stance_width
+gbl_stance_length  = neutral_stance_length
+gbl_body_center_up = neutral_body_height
+
 gbl_body_center_left    = 0.0
 gbl_body_center_forward = 0.0
 
@@ -44,14 +80,18 @@ gbl_body_angle_roll  = 0.0
 gbl_body_angle_pitch = 0.0
 gbl_body_angle_yaw   = 0.0
 
-walk_parameter_lock = threading.Lock()
-## END GLOBAL VERIABLES #################
+# Time to move from previous state to a new static pose such as "sit" or "stand"
+# This should be set to something reasonable before changing the state to one of the static pose states
+gbl_static_transition_time = 0.0
+
+gbl_lock = threading.Lock()
+## END GLOBALS #################
+
 
 
 def limit_check_lp(Lp, check_id=''):
     """Perform a diagnostic error check on Lp array -- remove this in production code"""
     if abs(np.amax(Lp[:, :3])) > 0.300:
-
         # ERROR something is wrong, the legs are not over 300 mm long
         log.error('Lp array limit check failed')
         print(check_id, Lp)
@@ -61,328 +101,185 @@ def limit_check_lp(Lp, check_id=''):
 def neutral_stance_Lp() -> np.array:
     """Function to return a reasonable neutral stance on flat ground"""
 
-    # Units for these are Meters.
-    vertical =      0.180   #FIXME constant
-    stance_width =  0.130
-    stance_length = 0.260
+    global gbl_stance_width
+    global gbl_body_center_up
+    global gbl_run_control_loop
 
-    stance_halfwidth = stance_width / 2.0
+    # Units for these are Meters.  Change the constants as opion about
+    # what is best evolves.
+    bias = -0.065
+
+    if gbl_lock.acquire(blocking=True, timeout=0.5):
+        stance_width  = gbl_stance_width
+        stance_length = gbl_stance_length
+        vertical      = gbl_body_center_up
+        gbl_lock.release()
+    else:
+        log.warning('neutral_stance_Lp() failed to acquire lock')
+
+    stance_halfwidth  = stance_width  / 2.0
     stance_halflength = stance_length / 2.0
 
-    bias = -0.065
     # Distances of each foot from body center
     #                   fore/aft               height      left/right
-    Lp = np.array([[ stance_halflength + bias, -vertical,  stance_halfwidth, 1],   # LF
-                   [ stance_halflength + bias, -vertical, -stance_halfwidth, 1],   # RF
-                   [-stance_halflength + bias, -vertical,  stance_halfwidth, 1],   # LR
+    Lp = np.array([[stance_halflength + bias, -vertical, stance_halfwidth, 1],  # LF
+                   [stance_halflength + bias, -vertical, -stance_halfwidth, 1],  # RF
+                   [-stance_halflength + bias, -vertical, stance_halfwidth, 1],  # LR
                    [-stance_halflength + bias, -vertical, -stance_halfwidth, 1]])  # RR
 
     limit_check_lp(Lp, check_id='get_neural_stance_Lp')
     return Lp
 
-def get_length_period(velocity: float) -> (float, float):
-    """ find combination of step length and period given a desired velocity
 
-    This is a placeholder function that returns a workable result.
+tick_start = 0.0
+lp_neutral = neutral_stance_Lp()
+lp = lp_neutral.copy()
+
+velocity_x = 0.0
+velocity_y = 0.0
+rot_rate_z = 0.0
+fp = footpath.Footpath()
+body_center_up = 0.
+transition_time = 0.
+
+
+def control_loop():
+    """
+    Realtime control loop for robot base controller.
+
+    This function should be called as a task.  After some setup, a loop is
+    entered that runs many times per second.  The loop will,
+      1) read shared variables, after obtaining lock
+      2) compute the desired location in (x,y,z), body relative for each foot
+      3) perform inverse kinetics to find the joint angles for each leg
+      4) update the servo motors to move the joints to the desired angle
+    The loop continues to run until gbl_run_control_loop is set to False.
+
+    Returns: none.
+
     """
 
-    # Enforce a speed limit
-    if velocity > config.max_forward_speed:
-        log.warning('velocity > config.max_forward_speed')
-        velocity = config.max_forward_speed
+    # Parameters, local to this function
+    loop_frequency = 40.0
 
-    min_hz = 1.5
-    max_hz = 3.0
-    preferred_step_length = 0.060  #FIXME constany
+    ### GLOBALS used for inter task communication
+    global gbl_lock
+    global gbl_run_control_loop
 
-    step_hz = velocity / preferred_step_length
-
-    if step_hz > max_hz:
-        step_hz = max_hz
-    elif step_hz < min_hz:
-        step_hz - min_hz
-
-    step_length = velocity / step_hz
-    step_period = 1.0 / step_hz
-
-    return step_length, step_period
-
-
-def phase_duration_4_foot_contact(phase_list, air_fraction) -> float:
-
-    not_zero = []
-    for phase in phase_list:
-        if phase != 0.0:
-            not_zero.append(abs(phase))
-
-    smallest_not_zero = min(not_zero)
-    contact_duration = smallest_not_zero - air_fraction
-
-    assert contact_duration > 0.0, 'snz={0}, af={1}'.format(smallest_not_zero, air_fraction)
-    return contact_duration
-
-
-def log_foot(Lp, foot_idx, phase, t):
-    global init_time
-
-    log.info('log_foot {0:7.3}, {1:7.3}, {2:s}'.format(t-init_time, phase, str(Lp[foot_idx])))
-    return
-
-# fixme "velocity" needs to be a vector, not a scaler, so the robot can side-step.
-def walking():
-
-    global run_walking_control_loop
-    global walk_parameter_lock
+    global gbl_robot_state
 
     global gbl_body_center_up
     global gbl_body_center_left
     global gbl_body_center_forward
-    
+
     global gbl_body_angle_roll
     global gbl_body_angle_pitch
     global gbl_body_angle_yaw
 
+    global prior_state
+    global robot_substate
+
+    global velocity_x
+    global velocity_y
+    global rot_rate_z
+    global tick_start
+    global body_center_up
+
+    global gbl_static_transition_time
+    global transition_time
 
     ### Channel number on PCA9685 for each angle
-    #                         th1 th2 th3
-    servo_channel = np.array([[ 0,  1,  2],    # LF
-                              [ 4,  5,  6],    # RF
-                              [ 8,  9, 10],    # LR
-                              [12, 13, 14]],   # RR
+    #                          th1 th2 th3
+    servo_channel = np.array([[ 0,  1,  2],  # LF
+                              [ 4,  5,  6],  # RF
+                              [ 8,  9, 10],  # LR
+                              [12, 13, 14]], # RR
                              dtype=np.uint8)
+    # Class to abstract real and simulated servo hardware
     servos = joints.ServoShim()
-    ap = air_path.AirPath()
+
+    # smk (Spot Micro Kinematic) object
     smk = sm_kinematics.Kinematic()
 
-    # numpy array to hold position of all four feet
-    Lp_neutral = neutral_stance_Lp()
-    Lp = Lp_neutral.copy()
-    limit_check_lp(Lp, check_id='stance')
-
-    # Set the leg phases and "air fraction" to define an amble gait
-    # where one legs moves forward at a time
-    # In this gait, leg LF leads and the others follow
-
-    leg_relative_phase = [0., 0., 0., 0.]
-    gait = 'trot'
-
-    if gait == 'trot':
-        step_air_fraction = 0.20
-        leg_relative_phase[LegId.LF.value] =  0.00
-        leg_relative_phase[LegId.RR.value] =  0.00
-        leg_relative_phase[LegId.RF.value] = -0.50
-        leg_relative_phase[LegId.LR.value] = -0.50
-    elif gait == 'creep':
-        step_air_fraction = 0.20
-        leg_relative_phase[LegId.LF.value] =  0.00
-        leg_relative_phase[LegId.RR.value] = -0.25
-        leg_relative_phase[LegId.RF.value] = -0.50
-        leg_relative_phase[LegId.LR.value] = -0.75
-    else:
-        log.error('invalid gait')
-
-    # Get Velocity, so we can compute initial step length and period
-    with walk_parameter_lock:
-        velocity = gbl_velocity
-        turnrate = gbl_turnrate
-        body_center_up      = gbl_body_center_up
-        body_center_left    = gbl_body_center_left
-        body_center_forward = gbl_body_center_forward
-         
-        body_angle_roll  = gbl_body_angle_roll
-        body_angle_pitch = gbl_body_angle_pitch
-        body_angle_yaw   = gbl_body_angle_yaw
-
-    if velocity == 0.0:
-        step_length = 0.0
-        step_period = 0.0
-        standing = True
-    else:
-        step_length, step_period = get_length_period(velocity)
-        standing = False
-
-    step_height = 0.040 #FIXME This should not be a constant (025)
-    last_velocity = velocity
-
-    # Velocity should be a vector, not a scaler as this robot can
-    # walk in a direction it is not facing.
-    velocity_vector = np.array([velocity, 0.0, 0.0])     # [forward, up left]
-
+    # Heartbeat will blink a LED.
     heartbeat_time = 0.0
-    heartbeat_period = 1.0
+    heartbeat_period = 5.0
 
-    loop_frequency = 20.0  # fixme this should come from config
     loop_period = 1.0 / loop_frequency
-    step_start = 0.
-
+    run_control_loop = True  # Set True in case acquire lock fails.
     while True:
         tick_start = time.time()
 
         # copy global parameters
-        log.debug('acquiring the lock...')
-        if walk_parameter_lock.acquire(blocking=True, timeout=0.010):
-            run = run_walking_control_loop
-            velocity = gbl_velocity
-            turnrate = gbl_turnrate
-            
-            body_center_up =      gbl_body_center_up
-            body_center_left =    gbl_body_center_left
+        if gbl_lock.acquire(blocking=True, timeout=loop_period / 2.0):
+            run_control_loop = gbl_run_control_loop
+
+            robot_state = gbl_robot_state
+
+            velocity_x = gbl_velocity_x
+            velocity_y = gbl_velocity_y
+            rot_rate_z = gbl_rot_rate_z
+
+            body_center_up      = gbl_body_center_up
+            body_center_left    = gbl_body_center_left
             body_center_forward = gbl_body_center_forward
-         
+
             body_angle_roll  = gbl_body_angle_roll
             body_angle_pitch = gbl_body_angle_pitch
             body_angle_yaw   = gbl_body_angle_yaw
-     
-            walk_parameter_lock.release()
+
+            transition_time = gbl_static_transition_time
+
+            gbl_lock.release()
         else:
-            log.error('>>>failed to acquire lock<<<  {0}'.format(tick_start))
+            log.warning('control_loop() failed to acquire lock {0}'.format(tick_start))
+            print('control_loop() failed to acquire lock {0}'.format(tick_start)) #TODO
 
         # Check if this thread should continue running
-        if not run:
-            log.info('walk_thread terminating at {0}'.format(tick_start))
+        if not run_control_loop:
+            log.info('control loop terminating at {0}'.format(tick_start))
+            print('control loop terminating at {0}'.format(tick_start)) #TODO
             break
 
         # Heartbeat -- show the world this thread is alive
         if tick_start > heartbeat_time:
-            # TBD need to blink a LED
+            #FIXME need to blink a real LED
             log.debug('heartbeat at {0}'.format(tick_start))
+            print('heartbeat at {0}'.format(tick_start)) #TODO remove
             heartbeat_time = tick_start + heartbeat_period
 
-        # Check the state.  If at rest then we should not advance the step_state
-        # or move the legs other than to maintain balance and body position
-        if not standing:
+        # Did the robot state just change?  If so then the sub state has to be "STARTING"
+        if robot_state != prior_state:
+            robot_substate = BehaviorSubState.STARTING
+            prior_state = robot_state
 
-            # get the current step phase, handle wrap-around.  Phase can never
-            # be greater than 1.0
-            # Note that step_start is initialized to zero when ever the robot
-            # is AT_REST, so we set it the first time around
-            if step_start == 0.0:
-                step_start = tick_start
-                step_phase = 0.0
-            else:
-                step_phase = (tick_start - step_start) / step_period
-                if step_phase > 1.0:
-                    (step_phase, _) = math.modf(step_phase)
-                    step_start = tick_start - (step_period * step_phase)
+        if robot_state == BehaviorState.INITIAL_POWERUP:
+            # In this state, there is nothing to do.
+            continue
 
-            assert step_phase <= 1.0, \
-                   '{0}, {1}, {2}'.format(tick_start, step_start, step_period)
-
-            # Track the number of feet on the ground.  We start by assuming none are
-            num_feet_on_ground = 0
-
-            for leg_id in LegId:
-                leg_phase = step_phase + leg_relative_phase[leg_id.value]
-
-                if leg_phase < 0:
-                    leg_phase = 1.0 + leg_phase
-                assert 0.0 <= leg_phase <= 1.0
-                log.debug('leg = {0}, leg_phase = {1}, time = {2}'.
-                          format(leg_id.value, leg_phase, tick_start))
-
-                # The robot has several ways to turn.  One is to adjust the length of each
-                # step on the left side relative to the step length on the right side
-                # "turnrate" is the amount longerthe right side step is than the left side
-                # step length.  When turnrate == 1.0 then the right side is twice as long
-                # as the left.  When turnrate == 0.0 the steps are equal length.
-                if abs(turnrate) < 0.01:
-                    # we are not turning
-                    adjusted_step_length = step_length
-                else:
-                    delta_step_length = step_length * turnrate
-
-                    # if the current leg on the left or the right?
-                    if leg_id in (LegId.LF, LegId.LR):
-                        adjusted_step_length = step_length - delta_step_length
-                    else:
-                        adjusted_step_length = step_length + delta_step_length
-
-                # Is this leg in ground contact?
-                # Feet always start to lift off the ground when phase is zero
-                # and remain off the ground until phase is > then the current air fraction
-                if leg_phase < step_air_fraction:
-                    ### This foot is in the air ###
-                    # So we must use a table look-up
-                    # and some math to get its current position.
-                    # First we compute "air_fraction"
-                    # which is the fraction of the air path completed.
-                    air_fraction_completed = leg_phase / step_air_fraction
-                    assert 0.0 <= air_fraction_completed <= 1.0
-
-                    (foot_x, foot_z) = ap.get_xz(air_fraction_completed,
-                                                 adjusted_step_length, step_height)
-                    # fixme - the below assume the foot moves only fore/aft and the robot
-                    #        never side steps.  We should project X on to x,y plane
-                    #Lp[leg_id.value, :2] = [foot_x + Lp_neutral[leg_id.value, 0], foot_z + Lp_neutral[leg_id.value, 1]]
-                    #Lp[leg_id.value, :2] = [foot_x                              , foot_z + Lp_neutral[leg_id.value, 1]]
-                    # FIXME uing the constant below is a HACK.  Need to compute it
-                    x_neutral = Lp_neutral[leg_id.value, 0]
-                    #z_neutral = Lp_neutral[leg_id.value, 1]
-                    Lp[leg_id.value, :2] = [foot_x + x_neutral, foot_z - body_center_up]
-                    # DEBUGGING ONLY
-                    # limit_check_lp(Lp, check_id='air')
-
-                else:
-                    ### This foot is in contact with the ground. ###
-                    num_feet_on_ground += 1
-
-                    # We know this foot is stationary relative to the ground
-                    # and moves relative to the robot exactly opposite
-                    # to the robot's velocity vector. So we move the foot
-                    # by the -1 times amount the robot moves in one loop period
-                    # fixme this should be a vector calculation
-                    ##Lp[leg_id.value, 0:3] -= velocity_vector * loop_period
-                    Lp[leg_id.value, 0] -= velocity_vector[0] * loop_period
-                    Lp[leg_id.value, 1]   = -body_center_up
-                    # DEBUGGING ONLY
-                    # limit_check_lp(Lp, check_id='ground')
+        elif robot_state == BehaviorState.NEUTRAL_STAND:
+            control_stand()
+        elif robot_state == BehaviorState.WALK:
+            control_walk()
+        elif robot_state == BehaviorState.SIT:
+            control_sit()
         else:
-            # The robot is "standing", that is not walking and velocity is zero
-            num_feet_on_ground = 4      # When AT_REST we assume 4 feet on ground
-            step_start = 0.             # Step phase does not advance when AT_REST
-            step_phase = 0.
+            log.error('Invalid State, resetting')
+            robot_state = BehaviorState.INITIAL_POWERUP
 
-        # Check if all four feet are on the ground, if so then we can
-        # update any of the step parameters
-        if num_feet_on_ground == 4:
-
-            # Now is the time, with all four feet down
-            # to adjust the step parameters.
-            if velocity != last_velocity:
-
-                # We treat zero velocity as a special case.
-                if velocity == 0.0:
-                    step_length = 0.0
-                    step_period = 0.0
-                    last_velocity = 0.0
-                    standing = True
-                else:
-                    step_length, step_period = get_length_period(velocity)
-                    last_velocity = velocity
-                    standing = False
-
-                # Velocity should be a vector, not a scaler as this robot can
-                # walk in a direction it is not facing.
-                velocity_vector = (velocity, 0.0, 0.0)  # (forward, up, left)
-
-        # fixme -- add in any body position and angle needed for things like balance
-        #roll_correction, pitch_correction = balance.rotate_to_level(imu.get_acceleration())
+        #FIXME -- add in any body position and angle needed for things like balance
+        # roll_correction, pitch_correction = balance.rotate_to_level(imu.get_acceleration())
         roll_correction, pitch_correction = 0.0, 0.0
-        #FIXME use the corrections, not zeroes.
-        
-        # Find the joint angles to move the foot to the required position
-        body_angles = (body_angle_roll + roll_correction, body_angle_pitch + pitch_correction, body_angle_yaw)
-        body_center = (body_center_forward, body_center_up-0.180, body_center_left)  #FIXME constal .180
-        # DEBUGGING ONLY
-        # limit_check_lp(Lp, check_id='ik')
-        lg = 0 # leg to log
-        log_foot(Lp, lg, step_phase, tick_start)
 
-        joint_angles = smk.calcIK(Lp, body_angles, body_center)
-        log.debug('log_foot                 angles {0:7.3f}, {1:7.3f}, {2:7.3f}'.
-                  format(math.degrees(joint_angles[lg, 0]),
-                         math.degrees(joint_angles[lg, 1]),
-                         math.degrees(joint_angles[lg, 2])))
+        # Find the joint angles to move the foot to the required position
+        body_angles = (body_angle_roll + roll_correction,
+                       body_angle_yaw,
+                       body_angle_pitch + pitch_correction)
+        body_center = (body_center_forward,
+                       body_center_up-neutral_body_height,
+                       body_center_left)
+
+        joint_angles = smk.calcIK(lp, body_angles, body_center)
 
         # Set the robots joints to the angles computed above.
         # Note that the function below will check if the motors are enabled or if
@@ -398,120 +295,279 @@ def walking():
         if sleep_time < 0.001:
             log.warning('loop overrun, elapsed = {0}'.format(tick_elapsed))
         else:
-            assert sleep_time < loop_period
-            assert sleep_time > 0.001
+            assert 0.001 < sleep_time < loop_period, 'invalid sleep_time {0}'.format(sleep_time)
             time.sleep(sleep_time)
 
     # this task ends
-    log.debug('walk_thread hits return')
+    log.debug('control loop hits return')
     return
 
+
+stand_start_time = 0.0
+lp_zero = np.array([[0., 0., 0., 0.],
+                    [0., 0., 0., 0.],
+                    [0., 0., 0., 0.],
+                    [0., 0., 0., 0.]])
+
+# Table specifies the phase when each foot begins to move and when it finishes
+# phase the fraction of the transition_time that has past since stand_start_time.
+# FIXME This table needs to be computed based on distance each foot is to be moved.
+#
+#             Start  End
+leg_phase = [(0.00, 0.20),  # leg 0 LF
+             (0.50, 0.70),  # leg 1 RF
+             (0.25, 0.45),  # leg 2 LR
+             (0.75, 0.95)]  # leg 4 RR
+
+
+def control_stand() -> None:
+
+    global gbl_lock
+
+
+    global robot_substate
+    global stand_start_time
+    global lp_zero
+    global lp_neutral
+
+    global transition_time
+    global lp
+
+    if robot_substate == BehaviorSubState.STARTING:
+
+        # Substate is "starting" so we run the initialization code then set state to
+        # "continueing"
+        stand_start_time = time.time()
+
+        lp_zero = lp.copy()   # save current feet location
+        lp_neutral = neutral_stance_Lp()
+        robot_substate = BehaviorSubState.CONTINUING
+
+    if robot_substate == BehaviorSubState.CONTINUING:
+
+        phase = (time.time() - stand_start_time) / transition_time
+        if phase < 1.0:
+            lp =  (phase * lp_zero) +  ((1.0 - phase) * lp_neutral)
+
+        else:
+            lp = lp_neutral.copy()
+
+    else:
+        log.error('Invalid Substate')
+    return
+
+
+step_start = 0.0
+#                     LF     RF     LR     RR
+leg_relative_phase = [0.00, -0.50, -0.50, -0.00]
+static_step_air_fraction = 0.0
+last_velocity = (0., 0., 0.)
+step_period = 0.001 # 0.001 is a hack to avid potential for divide by zero error
+
+
+def control_walk():
+
+    global gbl_lock
+    global robot_substate
+    global step_start
+    global tick_start
+    global leg_relative_phase
+    global static_step_air_fraction
+    global body_center_up
+    global last_velocity
+    global step_period
+
+    if robot_substate == BehaviorSubState.STARTING:
+        step_start = tick_start
+        robot_substate = BehaviorSubState.CONTINUING
+
+    if robot_substate == BehaviorSubState.CONTINUING:
+
+        # if the robot is not moving, there is nothing to do...
+        if (abs(velocity_x) + abs(velocity_y)) < 0.002:
+            return
+
+        # Only call fp.set_velocity on change
+        if last_velocity != (velocity_x, velocity_y, rot_rate_z):
+            step_period = fp.set_velocity(velocity_x, velocity_y, rot_rate_z)
+            last_velocity = (velocity_x, velocity_y, rot_rate_z)
+
+        # get the current step phase, handle wrap-around.  Phase can never
+        # be greater than 1.0
+        assert step_period > 0.01  # verify a sane value
+        step_phase = (tick_start - step_start) / step_period
+        if step_phase > 1.0:
+            (step_phase, _) = math.modf(step_phase)
+            step_start = tick_start - (step_period * step_phase)
+
+        assert 0.0 <= step_phase <= 1.0, \
+            'invalid Step Phase {0}, {1}, {2}, {3}'. \
+                format(step_phase, tick_start, step_start, step_period)
+
+        num_feet_on_ground = 0
+        for leg_id in LegId:
+            leg_abs_phase = step_phase + leg_relative_phase[leg_id.value]
+
+            if leg_abs_phase < 0:
+                leg_abs_phase = 1.0 + leg_abs_phase
+            assert 0.0 <= leg_abs_phase <= 1.0
+
+            fx, fy, fz = fp.xyz(leg_abs_phase)
+            x_neutral = lp_neutral[leg_id.value, 0]
+            y_neutral = lp_neutral[leg_id.value, 2]
+            lp[leg_id.value, :3] = [fx + x_neutral,
+                                    fz - body_center_up,
+                                    fy + y_neutral]
+            if fz == 0.0:
+                num_feet_on_ground += 1
+
+        # Check if all four feet are on the ground, if so then we can
+        # update any of the step parameters
+        if num_feet_on_ground == 4:
+            # Now is the time, with all four feet down
+            # to adjust the step parameters.
+            step_period = fp.set_velocity(velocity_x, velocity_y, rot_rate_z)
+
+
+def control_sit():
+    pass
+
+
 class Robot:
+    """
+    This class provides basic controls for the robot base controller.
+
+    The Robot class provides a set of functions that return immediately, that are
+    use to control the robot's basic motion and behaviors such as walk, sit, or
+    stand.  Creating a Robot object will start a task initialize the real-time
+    control loop.  The Robot class then has methods to create movements and to
+    get status.
+    """
 
     def __init__(self):
-        self.robot_state = 'inactive'
+        """Create a Robot object and a task to control it."""
+
+        self.lock_timeout = 0.5
+        self.__start_control_loop_thread()
+
         return
 
     def kill(self):
-        global walk_parameter_lock
-        global run_walking_control_loop
+        """Quickly stops the realtime control task."""
 
-        log.debug('kill entered at {0}'.format(time.time()))
+        global gbl_lock
+        global gbl_run_control_loop
+        global gbl_robot_state
 
-        with walk_parameter_lock:
-            run_walking_control_loop = False
-
-        self.robot_state = 'inactive'
-        return
-
-    def stop_natural(self):
-        """ DO NOT USE THIS, I am going to remove it """
-        log.warning('Need to remove call to Stop_Natural()')
-        self.set_velocity(0.0)
-
-
-    def stop_panic(self):
-        """NO NOT USE THIS"""
-        log.warning('Need to remove call to Stop_panic()')
-        self.kill()
-        return
-
-    def set_velocity(self, velocity: float):
-        """Sets global velocity variable"""
-        global walk_parameter_lock
-        global gbl_velocity
-
-        with walk_parameter_lock:
-            gbl_velocity = velocity
-        return
-
-    def set_turnrate(self, turnrate: float):
-        """Sets global turnrate variable"""
-        global walk_parameter_lock
-        global gbl_turnrate
-
-        with walk_parameter_lock:
-            gbl_turnrate = turnrate
-        return
-
-    def walk(self, velocity: float):
-        """ The robot walks"""
-
-        global run_walking_control_loop
-        global gbl_velocity
-        global walk_parameter_lock
-
-        log.debug('walk entered at {0}'.format(time.time()))
-
-        with walk_parameter_lock:
-            run_walking_control_loop = True
-            gbl_velocity = velocity
-
-        # Create and start a walking thread.
-        if not self.robot_state == 'walking':
-            self.walk_thread = threading.Thread(target=walking, args=(), daemon=True)
-            log.debug("starting walk_thread")
-            self.robot_state = 'walking'
-            self.walk_thread.start()
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_run_control_loop = False
+            gbl_robot_state = BehaviorState.INITIAL_POWERUP
+            gbl_lock.release()
         else:
-            log.debug("walk_thread already active")
-
-        log.debug("walk returning")
+            log.error('kill() failed to acquire lock')
         return
 
-    def set_body_angles(self, body_angle: (float, float, float)):
 
-        global walk_parameter_lock
+    def set_velocity(self, vel_x: float = 0.0, vel_y: float = 0.0, rot_z: float = 0.0):
+        """Sets the robot's velocity and rate of turn over ground."""
+
+        global gbl_lock
+        global gbl_velocity_x
+        global gbl_velocity_y
+        global gbl_rot_rate_z
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_velocity_x = vel_x
+            gbl_velocity_y = vel_y
+            gbl_rot_rate_z = rot_z
+            gbl_lock.release()
+        else:
+            log.error('set_velocity() failed to acquire lock')
+        return
+
+    def walk(self, vel_x: float = 0.0, vel_y: float = 0.0, rot_z: float = 0.0):
+        """Cause robot to walk."""
+
+        global gbl_lock
+        global gbl_robot_state
+
+        self.set_velocity(vel_x, vel_y, rot_z)
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_robot_state = BehaviorState.WALK
+            gbl_lock.release()
+        else:
+            log.error('walk() failed to acquire lock')
+        return
+
+    def stand(self, transition: float = 1.0):
+        """Cause robot to stand in a neutral position."""
+
+        global gbl_lock
+        global gbl_robot_state
+        global gbl_static_transition_time
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_static_transition_time = transition
+            gbl_robot_state    = BehaviorState.NEUTRAL_STAND
+            gbl_lock.release()
+        else:
+            log.error('stand() failed to acquire lock')
+        return
+
+    def sit(self, transition_time: float = 0.0):
+        """Cause robot to sit."""
+
+        global gbl_lock
+        global gbl_robot_state
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_robot_state    = BehaviorState.SIT
+            gbl_lock.release()
+        else:
+            log.error('failed to acquire lock')
+        return
+
+    def set_body_angles(self, body_angle: (float, float, float) = (0.0, 0.0, 0.0)):
+        """Set body rotations with respect to neutral position."""
+
+        global gbl_lock
 
         global gbl_body_angle_roll
         global gbl_body_angle_pitch
         global gbl_body_angle_yaw
-        
-        limit = math.radians(21.0) #limit for all angles
+
+        limit = math.radians(21.0)  # limit for all angles
 
         roll = body_angle[0]
-        assert -limit <= roll <= limit,  f"roll = {roll}"
+        assert -limit <= roll <= limit, f"roll = {roll}"
 
-        pitch    = body_angle[1]
+        pitch = body_angle[1]
         assert -limit <= pitch <= limit, f"pitch = {pitch}"
 
-        yaw      = body_angle[2]
-        assert -limit <= yaw <= limit,   f"yaw = {yaw}"
+        yaw = body_angle[2]
+        assert -limit <= yaw <= limit, f"yaw = {yaw}"
 
-        log.debug('acquiring the lock...')
-        if walk_parameter_lock.acquire(blocking=True, timeout=0.5):
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
 
-            gbl_body_angle_roll   = roll
-            gbl_body_angle_pitch  = pitch
-            gbl_body_angle_yaw    = yaw
+            gbl_body_angle_roll = roll
+            gbl_body_angle_pitch = pitch
+            gbl_body_angle_yaw = yaw
 
-            walk_parameter_lock.release()
+            gbl_lock.release()
         else:
             log.error('failed to acquire lock')
 
     def set_body_center(self, body_point: (float, float, float)):
+        """Set body translations with respect to neutral position."""
 
-        global walk_parameter_lock
+        global gbl_lock
 
         global gbl_body_center_up
         global gbl_body_center_left
@@ -520,46 +576,115 @@ class Robot:
         forward = body_point[0]
         assert -0.100 <= forward <= 0.100
 
-        left    = body_point[1]
-        assert -0.100 <= left    <= 0.100
+        left = body_point[1]
+        assert -0.100 <= left <= 0.100
 
-        up      = body_point[2]
-        assert  0.120 <= up      <= 0.240
+        up = body_point[2]
+        assert 0.120 <= up <= 0.240
 
         log.debug('acquiring the lock...')
-        if walk_parameter_lock.acquire(blocking=True, timeout=0.5):
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
 
             gbl_body_center_forward = forward
-            gbl_body_center_left    = left
-            gbl_body_center_up      = up
+            gbl_body_center_left = left
+            gbl_body_center_up = up
 
-            walk_parameter_lock.release()
+            gbl_lock.release()
         else:
             log.error('failed to acquire lock')
 
-    def set_stance_width(self, stance_width: float):
-        pass
+    def set_stance_width(self, stance_width_delta: float):
+        """Set the distance between the left and right feet
+
+        Parms:
+            stance_width_delta  Reduction from nominal stance in meters
+        """
+
+
+
+        global gbl_lock
+        global gbl_stance_width
+
+        assert -0.050 < stance_width_delta < 0.050
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_stance_width = neutral_stance_width + stance_width_delta
+            gbl_lock.release()
+        else:
+            log.error('failed to acquire lock')
+        return
 
     def set_stance_length(self, stance_length: float):
-        pass
+        """Set the distance between the front and rear feet."""
 
-def walk_test(duration):
-    assert duration >   0.0
-    assert duration <= 10.0
+        global gbl_lock
+        global gbl_stance_length
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            gbl_stance_length = stance_length
+            gbl_lock.release()
+        else:
+            log.error('failed to acquire lock')
+        return
+
+    def __start_control_loop_thread(self):
+        """Private method to setup and run the real time control loop."""
+        global gbl_lock
+        global gbl_run_control_loop
+        global gbl_robot_state
+        global gbl_robot_substate
+
+
+        if gbl_lock.acquire(blocking=True,
+                            timeout=self.lock_timeout):
+            loop_was_running = gbl_run_control_loop
+
+            gbl_run_control_loop = True
+            gbl_robot_state = BehaviorState.INITIAL_POWERUP
+            gbl_robot_substate = BehaviorSubState.STARTING
+
+            gbl_lock.release()
+        else:
+            log.error('failed to acquire lock')
+
+        if loop_was_running:
+            log.warning("control loop thread already active")
+            print("control loop thread already active") #TODO remove
+        else:
+
+            self.control_loop_thread = threading.Thread(target=control_loop, args=(), daemon=True)
+            log.debug("starting control_loop_thread")
+            print("starting control_loop_thread") #TODO remove
+            self.control_loop_thread.start()
+
+        log.debug("control loop thread returning")
+        return
+
+
+# Create an instance of the class, "singleton patterns"
+r = Robot()
+
+
+def __walk_test(duration):
+    """Debugging test, cause the robot to walk for a few seconds."""
+
+    assert duration > 0.0
+    assert duration <= 20.0
 
     r = Robot()
-    r.walk(0.05)
+    r.walk(0.05, 0, 0)
     time.sleep(duration)
-    r.stop_natural()
+    r.set_velocity(0.0, 0.0, 0.0)
+    r.stand()
     r.kill()
     return
 
 
-
 if __name__ == "__main__":
-
     logging.basicConfig(filename='quad_controller.log',
                         filemode='w',
-                        level=logging.DEBUG, )
-
-    walk_test()
+                        level=logging.DEBUG)
+    __walk_test(10)

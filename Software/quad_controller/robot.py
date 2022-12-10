@@ -159,9 +159,6 @@ def control_loop():
 
     """
 
-    # Parameters, local to this function
-    loop_frequency = 40.0
-
     ### GLOBALS used for inter task communication
     global gbl_lock
     global gbl_run_control_loop
@@ -189,11 +186,7 @@ def control_loop():
     global transition_time
 
     ### Channel number on PCA9685 for each angle
-    #                          th1 th2 th3
-    servo_channel = np.array([[ 0,  1,  2],  # LF
-                              [ 4,  5,  6],  # RF
-                              [ 8,  9, 10],  # LR
-                              [12, 13, 14]], # RR
+    servo_channel = np.array(config.servo_channel_assignment,
                              dtype=np.uint8)
     # Class to abstract real and simulated servo hardware
     servos = joints.ServoShim()
@@ -203,9 +196,8 @@ def control_loop():
 
     # Heartbeat will blink a LED.
     heartbeat_time = 0.0
-    heartbeat_period = 5.0
 
-    loop_period = 1.0 / loop_frequency
+    loop_period = 1.0 / config.rt_loop_freq
     run_control_loop = True  # Set True in case acquire lock fails.
     while True:
         tick_start = time.time()
@@ -246,7 +238,7 @@ def control_loop():
             #FIXME need to blink a real LED
             log.debug('heartbeat at {0}'.format(tick_start))
             print('heartbeat at {0}'.format(tick_start)) #TODO remove
-            heartbeat_time = tick_start + heartbeat_period
+            heartbeat_time = tick_start + config.rt_heartbeat_period
 
         # Did the robot state just change?  If so then the sub state has to be "STARTING"
         if robot_state != prior_state:
@@ -662,10 +654,6 @@ class Robot:
 
         log.debug("control loop thread returning")
         return
-
-
-# Create an instance of the class, "singleton patterns"
-r = Robot()
 
 
 def __walk_test(duration):

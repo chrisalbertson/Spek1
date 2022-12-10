@@ -7,6 +7,14 @@ so some code to get the constant values is allowed
 
 from enum import Enum
 
+
+# Realtime control loop rate and heartbeat
+rt_loop_freq = 20           # Hz
+rt_heartbeat_period = 5     # Seconds
+
+
+
+
 # This defines if the real robot hardware is present.
 # If not the controller will not attempt to send data to or
 # interact with physical device nor will it import the
@@ -35,19 +43,19 @@ class leg_id (Enum):
     RR = 2
     LR = 3
 
+
 class joint_id (Enum):
-    THETA1 = 0
-    THETA2 = 1
-    THETA3 = 2
+    THETA1 = 0          # shoulder, left/right
+    THETA2 = 1          # shoulder, fore/aft
+    THETA3 = 2          # knee
 
 
-# the get the servo chanel for the Right Front leg's knee joint use this:
-# channel = servo_channel[RF][THETA3]
-"""servo_channel = ( ( 0,  1,  2),
-                     ( 4,  5,  6),
-                     ( 8,  9, 10),
-                     (12, 13, 14))"""
-
+# Example: To get the servo chanel for the Right Front leg's knee joint use this:
+# channel = servo_channel[leg_id.RF.value][joint_id.THETA3.value]
+servo_channel_assignment = (( 0,  1,  2),
+                           ( 4,  5,  6),
+                           ( 8,  9, 10),
+                           (12, 13, 14))
 
 # This is the list of UIs (User Interfaces) that may be enabled.  Always at least one of these needs to
 # be enabled
@@ -55,4 +63,5 @@ class joint_id (Enum):
 ui_web_gui = False
 ui_x11_gui = not ui_web_gui
 ui_buttons = False       # set to True only if real hardware is present
+ui_gamepad = False
 

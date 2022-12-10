@@ -1,3 +1,16 @@
+"""
+Create the window and runs the event loop for robot GUI.
+
+The Spot controll software is divided into tasks that logically run in parallel.
+One task continously runs the motors on the robot to cntrol the position of the
+feet and the body.  Exactly what it does, wether it walks, jumps, sits or stands
+depends on the values of some global parameters that are shared between all the
+tasks.  This module runs a GUI that sets values of these global arameters.
+
+There may be other user interfaces that use an xBox gamepad, voice or a
+web browser but they like this user interface just set globals
+"""
+
 import logging
 import math
 log = logging.getLogger(__name__)
@@ -12,9 +25,8 @@ import yappi
 import robot
 
 
-def run_gui():
-
-    print('running GUI')
+def run_gui(robot) -> None:
+    """Create the window and run the event loop."""
 
     walk_speed = 0.0
     crab_speed = 0.0
@@ -190,37 +202,37 @@ def run_gui():
         elif event == '-SPEED-':
             walk_speed = float(values['-SPEED-'])
             window['-SPEED_TEXT-'].update(str(walk_speed))
-            robot.r.set_velocity(walk_speed, crab_speed, walk_turnrate)
+            robot.set_velocity(walk_speed, crab_speed, walk_turnrate)
 
         elif event == '-CRAB-':
             crab_speed = float(values['-CRAB-'])
             window['-CRAB_TEXT-'].update(str(crab_speed))
-            robot.r.set_velocity(walk_speed, crab_speed, walk_turnrate)
+            robot.set_velocity(walk_speed, crab_speed, walk_turnrate)
 
         elif event == '-TURN-':
             walk_turnrate = values['-TURN-']
             window['-TURN_TEXT-'].update(str(walk_turnrate))
-            robot.r.set_velocity(walk_speed, crab_speed, walk_turnrate)
+            robot.set_velocity(walk_speed, crab_speed, walk_turnrate)
 
         elif event == '-STANCE_ADJUST-':
             stance_adjust = values['-STANCE_ADJUST-']
             window['-STANCE_ADJUST_TEXT-'].update(str(stance_adjust))
-            robot.r.set_stance_width(stance_adjust/1000.0)  # convert mm to meters
+            robot.set_stance_width(stance_adjust/1000.0)  # convert mm to meters
 
         elif event == '-HEIGHT-':
             body_height = values['-HEIGHT-']
             window['-HEIGHT_TEXT-'].update(str(body_height))
-            robot.r.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
+            robot.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
 
         elif event == '-RIGHT-':
             body_right = values['-RIGHT-']
             window['-RIGHT_TEXT-'].update(str(body_right))
-            robot.r.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
+            robot.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
 
         elif event == '-FORWARD-':
             body_forward = values['-FORWARD-']
             window['-FORWARD_TEXT-'].update(str(body_forward))
-            robot.r.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
+            robot.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
             
         
             
@@ -234,22 +246,22 @@ def run_gui():
             window['-HEIGHT-'].update(body_height)
             window['-RIGHT-'].update(body_right)
             window['-FORWARD-'].update(body_forward)
-            robot.r.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
+            robot.set_body_center((body_forward/1000.0, body_right/1000.0, body_height/1000.0))
 
         elif event == '-ROLL-':
             body_roll = values['-ROLL-']
             window['-ROLL_TEXT-'].update(str(body_roll))
-            robot.r.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
+            robot.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
 
         elif event == '-PITCH-':
             body_pitch = values['-PITCH-']
             window['-PITCH_TEXT-'].update(str(body_pitch))
-            robot.r.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
+            robot.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
 
         elif event == '-YAW-':
             body_yaw = values['-YAW-']
             window['-YAW_TEXT-'].update(str(body_yaw))
-            robot.r.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
+            robot.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
             
         elif event == '-RESET_ROTATIONS-':
             body_roll  = 0.0
@@ -261,19 +273,19 @@ def run_gui():
             window['-ROLL-'].update(body_roll)
             window['-PITCH-'].update(body_pitch)
             window['-YAW-'].update(body_yaw)
-            robot.r.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
+            robot.set_body_angles((math.radians(body_roll), math.radians(body_pitch), math.radians(body_yaw)))
             
         elif event == '-WALK-':
-            robot.r.walk(walk_speed, crab_speed, walk_turnrate)
+            robot.walk(walk_speed, crab_speed, walk_turnrate)
 
         elif event == '-STAND-':
-            robot.r.stand(1.0)
+            robot.stand(1.0)
 
         elif event == '-STOP-':
             walk_speed    = 0.0
             crab_speed    = 0.0
             walk_turnrate = 0.0
-            robot.r.set_velocity(walk_speed, crab_speed, walk_turnrate)
+            robot.set_velocity(walk_speed, crab_speed, walk_turnrate)
 
             window['-SPEED-'].update(str(walk_speed))
             window['-SPEED_TEXT-'].update(str(walk_speed))
@@ -285,7 +297,7 @@ def run_gui():
         elif event == '-PANIC-':
             break
 
-    robot.r.kill()
+    robot.kill()
     window.close()
     return
 

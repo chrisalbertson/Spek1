@@ -4,15 +4,11 @@ import argparse
 import yappi
 
 import config
-import robot    # creats a singleton object robot.r
+import robot
 import gui
+import game_controller
 
 log = logging.getLogger(__name__)
-
-def start_ui():
-    if config.ui_x11_gui:
-        gui.run_gui()
-
 
 if __name__ == '__main__':
 
@@ -39,9 +35,15 @@ if __name__ == '__main__':
     if use_profiler:
         yappi.start()
 
+    # creating the robot object also stars the real-tiime control task.
+    r = robot.Robot()
+
     # Stand up then start up all configured user interfaces.
-    robot.r.stand()
-    start_ui()
+    r.stand()
+
+    #if config.ui_x11_gui:
+    #   gui.run_gui(r)
+    game_controller.run_gamepad(r)
 
     if use_profiler:
         yappi.get_func_stats().print_all()

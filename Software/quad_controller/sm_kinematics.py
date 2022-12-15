@@ -148,7 +148,7 @@ class Kinematic:
         """ Given location of each foot and the body, find the angles for all joints
 
         First computes the body IK to find the body-to-hip transform for each
-        leg.  Then the IK for each legs is computers and the resulting joint
+        leg.  Then the IK for each legs is computed and the resulting joint
         angles are returned in a Numpy array
 
         Parameters:

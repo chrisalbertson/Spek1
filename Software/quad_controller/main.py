@@ -6,7 +6,7 @@ import yappi
 import config
 import robot
 import gui
-import game_controller
+#import game_controller
 
 log = logging.getLogger(__name__)
 
@@ -41,9 +41,9 @@ if __name__ == '__main__':
     # Stand up then start up all configured user interfaces.
     r.stand()
 
-    #if config.ui_x11_gui:
-    #   gui.run_gui(r)
-    game_controller.run_gamepad(r)
+    if config.ui_x11_gui:
+       gui.run_gui(r)
+    #game_controller.run_gamepad(r)
 
     if use_profiler:
         yappi.get_func_stats().print_all()

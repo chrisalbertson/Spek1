@@ -13,7 +13,8 @@ log = logging.getLogger(__name__)
 from enum import Enum
 
 import config
-import joints
+# import joints
+import pca9685_psd
 import balance
 import footpath
 
@@ -189,7 +190,8 @@ def control_loop():
     servo_channel = np.array(config.servo_channel_assignment,
                              dtype=np.uint8)
     # Class to abstract real and simulated servo hardware
-    servos = joints.ServoShim()
+    # servos = joints.ServoShim()
+    s = pca9685_psd.Servo()
 
     # smk (Spot Micro Kinematic) object
     smk = sm_kinematics.Kinematic()
@@ -277,9 +279,15 @@ def control_loop():
         # Note that the function below will check if the motors are enabled or if
         # we are running in simulation only.  So maybe the angles only go to a log
         # file, or they could move the physical robot.
+        """
         for leg_idx, leg in enumerate(joint_angles):
             for theta_idx, theta in enumerate(leg):
-                servos.set_angle(servo_channel[leg_idx, theta_idx], theta)
+                servos.set_angle(servo_channel[leg_idx, theta_idx], theta)"""
+
+        # Turn (4, 3) array into a (16,) array.
+        # First make it a (4, 4) and then flatten it
+        joint_angles_flattened = np.append(joint_angles, [[0.0], [0.0], [0.0], [0.0]], 1).reshape(-1)
+        s.move_16_radian(joint_angles_flattened)
 
         tick_elapsed = time.time() - tick_start
         sleep_time = loop_period - tick_elapsed
